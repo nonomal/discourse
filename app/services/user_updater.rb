@@ -24,6 +24,7 @@ class UserUpdater
     email_messages_level
     external_links_in_new_tab
     enable_quoting
+    enable_smart_lists
     enable_defer
     color_scheme_id
     dark_scheme_id
@@ -41,15 +42,19 @@ class UserUpdater
     allow_private_messages
     enable_allowed_pm_users
     homepage_id
-    hide_profile_and_presence
+    hide_profile
+    hide_presence
     text_size
     title_count_mode
     timezone
     skip_new_user_tips
     seen_popups
     default_calendar
-    sidebar_list_destination
     bookmark_auto_delete_preference
+    sidebar_link_to_filtered_list
+    sidebar_show_count_of_new_items
+    watched_precedence_over_muted
+    topics_unread_when_closed
   ]
 
   NOTIFICATION_SCHEDULE_ATTRS = -> do
@@ -63,6 +68,7 @@ class UserUpdater
 
   def initialize(actor, user)
     @user = user
+    @user_guardian = Guardian.new(user)
     @guardian = Guardian.new(actor)
     @actor = actor
   end
@@ -125,6 +131,8 @@ class UserUpdater
       user.primary_group_id = nil
     end
 
+    attributes[:homepage_id] = nil if attributes[:homepage_id] == "-1"
+
     if attributes[:flair_group_id] && attributes[:flair_group_id] != user.flair_group_id &&
          (
            attributes[:flair_group_id].blank? ||
@@ -151,10 +159,10 @@ class UserUpdater
 
     # special handling for theme_id cause we need to bump a sequence number
     if attributes.key?(:theme_ids)
-      user_guardian = Guardian.new(user)
       attributes[:theme_ids].reject!(&:blank?)
       attributes[:theme_ids].map!(&:to_i)
-      if user_guardian.allow_themes?(attributes[:theme_ids])
+
+      if @user_guardian.allow_themes?(attributes[:theme_ids])
         user.user_option.theme_key_seq += 1 if user.user_option.theme_ids != attributes[:theme_ids]
       else
         attributes.delete(:theme_ids)
@@ -209,14 +217,22 @@ class UserUpdater
       if attributes.key?(:sidebar_category_ids)
         SidebarSectionLinksUpdater.update_category_section_links(
           user,
-          category_ids: attributes[:sidebar_category_ids],
+          category_ids:
+            Category
+              .secured(@user_guardian)
+              .where(id: attributes[:sidebar_category_ids])
+              .pluck(:id),
         )
       end
 
       if attributes.key?(:sidebar_tag_names) && SiteSetting.tagging_enabled
         SidebarSectionLinksUpdater.update_tag_section_links(
           user,
-          tag_names: attributes[:sidebar_tag_names],
+          tag_ids:
+            DiscourseTagging
+              .filter_visible(Tag, @user_guardian)
+              .where(name: attributes[:sidebar_tag_names])
+              .pluck(:id),
         )
       end
 
@@ -237,6 +253,7 @@ class UserUpdater
           attributes.fetch(:name) { "" },
         )
       end
+      DiscourseEvent.trigger(:within_user_updater_transaction, user, attributes)
     rescue Addressable::URI::InvalidURIError => e
       # Prevent 500 for crazy url input
       return saved
@@ -250,14 +267,14 @@ class UserUpdater
           user_notification_schedule.destroy_scheduled_timings
         end
       end
-      if attributes.key?(:seen_popups) || attributes.key?(:skip_new_user_tips)
-        MessageBus.publish(
-          "/user-tips/#{user.id}",
-          user.user_option.seen_popups,
-          user_ids: [user.id],
+      DiscourseEvent.trigger(:user_updated, user)
+
+      if attributes[:custom_fields].present? && user.needs_required_fields_check?
+        UserHistory.create!(
+          action: UserHistory.actions[:filled_in_required_fields],
+          acting_user_id: user.id,
         )
       end
-      DiscourseEvent.trigger(:user_updated, user)
     end
 
     saved

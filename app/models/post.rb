@@ -11,8 +11,8 @@ class Post < ActiveRecord::Base
   include LimitedEdit
 
   self.ignored_columns = [
-    "avg_time", # TODO(2021-01-04): remove
-    "image_url", # TODO(2021-06-01): remove
+    "avg_time", # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
+    "image_url", # TODO: Remove when 20240212034010_drop_deprecated_columns has been promoted to pre-deploy
   ]
 
   cattr_accessor :plugin_permitted_create_params, :plugin_permitted_update_params
@@ -56,6 +56,15 @@ class Post < ActiveRecord::Base
   has_many :post_revisions
   has_many :revisions, -> { order(:number) }, foreign_key: :post_id, class_name: "PostRevision"
 
+  has_many :moved_posts_as_old_post,
+           class_name: "MovedPost",
+           foreign_key: :old_post_id,
+           dependent: :destroy
+  has_many :moved_posts_as_new_post,
+           class_name: "MovedPost",
+           foreign_key: :new_post_id,
+           dependent: :destroy
+
   has_many :user_actions, foreign_key: :target_post_id
 
   belongs_to :image_upload, class_name: "Upload"
@@ -64,6 +73,7 @@ class Post < ActiveRecord::Base
   has_many :reviewables, as: :target, dependent: :destroy
 
   validates_with PostValidator, unless: :skip_validation
+  validates :edit_reason, length: { maximum: 1000 }
 
   after_commit :index_search
 
@@ -76,11 +86,11 @@ class Post < ActiveRecord::Base
                 :skip_unique_check,
                 :skip_validation
 
-  MISSING_UPLOADS ||= "missing uploads"
-  MISSING_UPLOADS_IGNORED ||= "missing uploads ignored"
-  NOTICE ||= "notice"
+  MISSING_UPLOADS = "missing uploads"
+  MISSING_UPLOADS_IGNORED = "missing uploads ignored"
+  NOTICE = "notice"
 
-  SHORT_POST_CHARS ||= 1200
+  SHORT_POST_CHARS = 1200
 
   register_custom_field_type(MISSING_UPLOADS, :json)
   register_custom_field_type(MISSING_UPLOADS_IGNORED, :boolean)
@@ -88,13 +98,13 @@ class Post < ActiveRecord::Base
   register_custom_field_type(NOTICE, :json)
 
   scope :private_posts_for_user,
-        ->(user) {
+        ->(user) do
           where(
             "topics.id IN (#{Topic::PRIVATE_MESSAGES_SQL_USER})
       OR topics.id IN (#{Topic::PRIVATE_MESSAGES_SQL_GROUP})",
             user_id: user.id,
           )
-        }
+        end
 
   scope :by_newest, -> { order("created_at DESC, id DESC") }
   scope :by_post_number, -> { order("post_number ASC") }
@@ -110,7 +120,7 @@ class Post < ActiveRecord::Base
         ->(guardian) { where("posts.post_type IN (?)", Topic.visible_post_types(guardian&.user)) }
 
   scope :for_mailing_list,
-        ->(user, since) {
+        ->(user, since) do
           q =
             created_since(since).joins(
               "INNER JOIN (#{Topic.for_digest(user, Time.at(0)).select(:id).to_sql}) AS digest_topics ON digest_topics.id = posts.topic_id",
@@ -119,10 +129,10 @@ class Post < ActiveRecord::Base
 
           q = q.where.not(post_type: Post.types[:whisper]) unless user.staff?
           q
-        }
+        end
 
   scope :raw_match,
-        ->(pattern, type = "string") {
+        ->(pattern, type = "string") do
           type = type&.downcase
 
           case type
@@ -131,10 +141,10 @@ class Post < ActiveRecord::Base
           when "regex"
             where("raw ~* ?", "(?n)#{pattern}")
           end
-        }
+        end
 
   scope :have_uploads,
-        -> {
+        -> do
           where(
             "
           (
@@ -150,7 +160,7 @@ class Post < ActiveRecord::Base
           )",
             "%/uploads/#{RailsMultisite::ConnectionManagement.current_db}/%",
           )
-        }
+        end
 
   delegate :username, to: :user
 
@@ -324,8 +334,9 @@ class Post < ActiveRecord::Base
     # is referencing.
     options[:user_id] = self.last_editor_id
     options[:omit_nofollow] = true if omit_nofollow?
+    options[:post_id] = self.id
 
-    if self.with_secure_uploads?
+    if self.should_secure_uploads?
       each_upload_url do |url|
         uri = URI.parse(url)
         if FileHelper.is_supported_media?(File.basename(uri.path))
@@ -437,7 +448,7 @@ class Post < ActiveRecord::Base
     # percent rank has tons of ties
     where(topic_id: topic_id).where(
       [
-        "id = ANY(
+        "posts.id = ANY(
           (
             SELECT posts.id
             FROM posts
@@ -550,20 +561,53 @@ class Post < ActiveRecord::Base
   end
 
   def is_flagged?
+    flags.count != 0
+  end
+
+  def post_action_type_view
+    @post_action_type_view ||= PostActionTypeView.new
+  end
+
+  def flags
     post_actions.where(
-      post_action_type_id: PostActionType.flag_types_without_custom.values,
+      post_action_type_id: post_action_type_view.flag_types_without_additional_message.values,
       deleted_at: nil,
-    ).count != 0
+    )
   end
 
   def reviewable_flag
     ReviewableFlaggedPost.pending.find_by(target: self)
   end
 
-  def with_secure_uploads?
+  # NOTE (martin): This is turning into hack city; when changing this also
+  # consider how it interacts with UploadSecurity and the uploads.rake tasks.
+  def should_secure_uploads?
     return false if !SiteSetting.secure_uploads?
-    SiteSetting.login_required? ||
-      (topic.present? && (topic.private_message? || topic.category&.read_restricted))
+    topic_including_deleted = Topic.with_deleted.find_by(id: self.topic_id)
+    return false if topic_including_deleted.blank?
+
+    # NOTE: This is to be used for plugins where adding a new public upload
+    # type that should not be secured via UploadSecurity.register_custom_public_type
+    # is not an option. This also is not taken into account in the secure upload
+    # rake tasks, and will more than likely change in future.
+    modifier_result =
+      DiscoursePluginRegistry.apply_modifier(
+        :post_should_secure_uploads?,
+        nil,
+        self,
+        topic_including_deleted,
+      )
+    return modifier_result if !modifier_result.nil?
+
+    # NOTE: This is meant to be a stopgap solution to prevent secure uploads
+    # in a single place (private messages) for sensitive admin data exports.
+    # Ideally we would want a more comprehensive way of saying that certain
+    # upload types get secured which is a hybrid/mixed mode secure uploads,
+    # but for now this will do the trick.
+    return topic_including_deleted.private_message? if SiteSetting.secure_uploads_pm_only?
+
+    SiteSetting.login_required? || topic_including_deleted.private_message? ||
+      topic_including_deleted.read_restricted_category?
   end
 
   def hide!(post_action_type_id, reason = nil, custom_message: nil)
@@ -580,20 +624,28 @@ class Post < ActiveRecord::Base
 
     hiding_again = hidden_at.present?
 
-    self.hidden = true
-    self.hidden_at = Time.zone.now
-    self.hidden_reason_id = reason
-    self.skip_unique_check = true
-
     Post.transaction do
-      save!
+      self.skip_validation = true
+      should_update_user_stat = true
 
-      Topic.where(
-        "id = :topic_id AND NOT EXISTS(SELECT 1 FROM POSTS WHERE topic_id = :topic_id AND NOT hidden)",
-        topic_id: topic_id,
-      ).update_all(visible: false)
+      update!(hidden: true, hidden_at: Time.zone.now, hidden_reason_id: reason)
 
-      UserStatCountUpdater.decrement!(self)
+      any_visible_posts_in_topic =
+        Post.exists?(topic_id: topic_id, hidden: false, post_type: Post.types[:regular])
+
+      if !any_visible_posts_in_topic
+        self.topic.update_status(
+          "visible",
+          false,
+          Discourse.system_user,
+          { visibility_reason_id: Topic.visibility_reasons[:op_flag_threshold_reached] },
+        )
+        should_update_user_stat = false
+      end
+
+      # We need to do this because TopicStatusUpdater also does the decrement
+      # and we don't want to double count for the OP.
+      UserStatCountUpdater.decrement!(self) if should_update_user_stat
     end
 
     # inform user
@@ -603,9 +655,10 @@ class Post < ActiveRecord::Base
         edit_delay: SiteSetting.cooldown_minutes_after_hiding_posts,
         flag_reason:
           I18n.t(
-            "flag_reasons.#{PostActionType.types[post_action_type_id]}",
+            "flag_reasons.#{post_action_type_view.types[post_action_type_id]}",
             locale: SiteSetting.default_locale,
             base_path: Discourse.base_path,
+            default: PostActionType.names[post_action_type_id],
           ),
       }
 
@@ -625,16 +678,41 @@ class Post < ActiveRecord::Base
   def unhide!
     Post.transaction do
       self.update!(hidden: false)
-      self.topic.update(visible: true) if is_first_post?
-      UserStatCountUpdater.increment!(self)
+      should_update_user_stat = true
+
+      # NOTE: We have to consider `nil` a valid reason here because historically
+      # topics didn't have a visibility_reason_id, if we didn't do this we would
+      # break backwards compat since we cannot backfill data.
+      hidden_because_of_op_flagging =
+        self.topic.visibility_reason_id == Topic.visibility_reasons[:op_flag_threshold_reached] ||
+          self.topic.visibility_reason_id.nil?
+
+      if is_first_post? && hidden_because_of_op_flagging
+        self.topic.update_status(
+          "visible",
+          true,
+          Discourse.system_user,
+          { visibility_reason_id: Topic.visibility_reasons[:op_unhidden] },
+        )
+        should_update_user_stat = false
+      end
+
+      # We need to do this because TopicStatusUpdater also does the increment
+      # and we don't want to double count for the OP.
+      UserStatCountUpdater.increment!(self) if should_update_user_stat
+
       save(validate: false)
     end
 
     publish_change_to_clients!(:acted)
   end
 
-  def full_url
-    "#{Discourse.base_url}#{url}"
+  def full_url(opts = {})
+    "#{Discourse.base_url}#{url(opts)}"
+  end
+
+  def relative_url(opts = {})
+    "#{Discourse.base_path}#{url(opts)}"
   end
 
   def url(opts = nil)
@@ -669,7 +747,11 @@ class Post < ActiveRecord::Base
     result = +"/t/"
     result << "#{slug}/" if !opts[:without_slug]
 
-    "#{result}#{topic_id}/#{post_number}"
+    if post_number == 1 && opts[:share_url]
+      "#{result}#{topic_id}"
+    else
+      "#{result}#{topic_id}/#{post_number}"
+    end
   end
 
   def self.urls(post_ids)
@@ -850,7 +932,7 @@ class Post < ActiveRecord::Base
       bypass_bump: bypass_bump,
       cooking_options: self.cooking_options,
       new_post: new_post,
-      post_id: id,
+      post_id: self.id,
       skip_pull_hotlinked_images: skip_pull_hotlinked_images,
     }
 
@@ -866,7 +948,8 @@ class Post < ActiveRecord::Base
     start_date,
     end_date,
     category_id = nil,
-    include_subcategories = false
+    include_subcategories = false,
+    group_ids = nil
   )
     result =
       public_posts.where(
@@ -879,8 +962,15 @@ class Post < ActiveRecord::Base
       if include_subcategories
         result = result.where("topics.category_id IN (?)", Category.subcategory_ids(category_id))
       else
-        result = result.where("topics.category_id = ?", category_id)
+        result = result.where("topics.category_id IN (?)", category_id)
       end
+    end
+    if group_ids
+      result =
+        result
+          .joins("INNER JOIN users ON users.id = posts.user_id")
+          .joins("INNER JOIN group_users ON group_users.user_id = users.id")
+          .where("group_users.group_id IN (?)", group_ids)
     end
 
     result.group("date(posts.created_at)").order("date(posts.created_at)").count
@@ -895,28 +985,7 @@ class Post < ActiveRecord::Base
       .count
   end
 
-  def reply_history(max_replies = 100, guardian = nil)
-    post_ids = DB.query_single(<<~SQL, post_id: id, topic_id: topic_id)
-    WITH RECURSIVE breadcrumb(id, reply_to_post_number) AS (
-          SELECT p.id, p.reply_to_post_number FROM posts AS p
-            WHERE p.id = :post_id
-          UNION
-             SELECT p.id, p.reply_to_post_number FROM posts AS p, breadcrumb
-               WHERE breadcrumb.reply_to_post_number = p.post_number
-                 AND p.topic_id = :topic_id
-        )
-    SELECT id from breadcrumb
-    WHERE id <> :post_id
-    ORDER by id
-    SQL
-
-    # [1,2,3][-10,-1] => nil
-    post_ids = (post_ids[(0 - max_replies)..-1] || post_ids)
-
-    Post.secured(guardian).where(id: post_ids).includes(:user, :topic).order(:id).to_a
-  end
-
-  MAX_REPLY_LEVEL ||= 1000
+  MAX_REPLY_LEVEL = 1000
 
   def reply_ids(guardian = nil, only_replies_to_single_post: true)
     builder = DB.build(<<~SQL)
@@ -1009,17 +1078,20 @@ class Post < ActiveRecord::Base
       upload ||= Upload.get_from_url(src)
 
       # Link any video thumbnails
-      if upload.present? && (FileHelper.supported_video.include? upload.extension)
+      if SiteSetting.video_thumbnails_enabled && upload.present? &&
+           FileHelper.supported_video.include?(upload.extension&.downcase)
         # Video thumbnails have the filename of the video file sha1 with a .png or .jpg extension.
         # This is because at time of upload in the composer we don't know the topic/post id yet
         # and there is no thumbnail info added to the markdown to tie the thumbnail to the topic/post after
         # creation.
         thumbnail =
-          Upload.where("original_filename like ?", "#{upload.sha1}.%").first if upload.sha1.present?
+          Upload
+            .where("original_filename like ?", "#{upload.sha1}.%")
+            .order(id: :desc)
+            .first if upload.sha1.present?
         if thumbnail.present?
-          upload_ids << thumbnail.id if thumbnail.present?
-
-          if self.is_first_post? #topic
+          upload_ids << thumbnail.id
+          if self.is_first_post? && !self.topic.image_upload_id
             self.topic.update_column(:image_upload_id, thumbnail.id)
             extra_sizes =
               ThemeModifierHelper.new(
@@ -1057,13 +1129,14 @@ class Post < ActiveRecord::Base
   end
 
   def update_uploads_secure_status(source:)
-    if Discourse.store.external? && SiteSetting.secure_uploads?
-      Jobs.enqueue(:update_post_uploads_secure_status, post_id: self.id, source: source)
+    if Discourse.store.external?
+      self.uploads.each { |upload| upload.update_secure_status(source: source) }
     end
   end
 
   def each_upload_url(fragments: nil, include_local_upload: true)
     current_db = RailsMultisite::ConnectionManagement.current_db
+
     upload_patterns = [
       %r{/uploads/#{current_db}/},
       %r{/original/},
@@ -1072,7 +1145,16 @@ class Post < ActiveRecord::Base
     ]
 
     fragments ||= Nokogiri::HTML5.fragment(self.cooked)
-    selectors = fragments.css("a/@href", "img/@src", "source/@src", "track/@src", "video/@poster")
+
+    selectors =
+      fragments.css(
+        "a/@href",
+        "img/@src",
+        "source/@src",
+        "track/@src",
+        "video/@poster",
+        "div/@data-video-src",
+      )
 
     links =
       selectors
@@ -1097,7 +1179,17 @@ class Post < ActiveRecord::Base
         sha1 = Upload.sha1_from_short_url(src)
         yield(src, nil, sha1)
         next
-      elsif src.include?("/uploads/short-url/")
+      end
+
+      if src.include?("/uploads/short-url/")
+        host =
+          begin
+            URI(src).host
+          rescue URI::Error
+          end
+
+        next if host.present? && host != Discourse.current_hostname
+
         sha1 = Upload.sha1_from_short_path(src)
         yield(src, nil, sha1)
         next
@@ -1107,6 +1199,7 @@ class Post < ActiveRecord::Base
       next if Rails.configuration.multisite && src.exclude?(current_db)
 
       src = "#{SiteSetting.force_https ? "https" : "http"}:#{src}" if src.start_with?("//")
+
       if !Discourse.store.has_been_uploaded?(src) && !Upload.secure_uploads_url?(src) &&
            !(include_local_upload && src =~ %r{\A/[^/]}i)
         next
@@ -1140,6 +1233,7 @@ class Post < ActiveRecord::Base
 
     DistributedMutex.synchronize("find_missing_uploads", validity: 30.minutes) do
       PostCustomField.where(name: Post::MISSING_UPLOADS).delete_all
+
       query =
         Post
           .have_uploads
@@ -1226,14 +1320,14 @@ class Post < ActiveRecord::Base
   private
 
   def parse_quote_into_arguments(quote)
-    return {} unless quote.present?
+    return {} if quote.blank?
     args = HashWithIndifferentAccess.new
     quote.first.scan(/([a-z]+)\:(\d+)/).each { |arg| args[arg[0]] = arg[1].to_i }
     args
   end
 
   def add_to_quoted_post_numbers(num)
-    return unless num.present?
+    return if num.blank?
     self.quoted_post_numbers ||= []
     self.quoted_post_numbers << num
   end
@@ -1314,9 +1408,10 @@ end
 #  index_posts_on_id_and_baked_version                    (id DESC,baked_version) WHERE (deleted_at IS NULL)
 #  index_posts_on_id_topic_id_where_not_deleted_or_empty  (id,topic_id) WHERE ((deleted_at IS NULL) AND (raw <> ''::text))
 #  index_posts_on_image_upload_id                         (image_upload_id)
-#  index_posts_on_reply_to_post_number                    (reply_to_post_number)
+#  index_posts_on_topic_id_and_created_at                 (topic_id,created_at)
 #  index_posts_on_topic_id_and_percent_rank               (topic_id,percent_rank)
 #  index_posts_on_topic_id_and_post_number                (topic_id,post_number) UNIQUE
+#  index_posts_on_topic_id_and_reply_to_post_number       (topic_id,reply_to_post_number)
 #  index_posts_on_topic_id_and_sort_order                 (topic_id,sort_order)
 #  index_posts_on_user_id_and_created_at                  (user_id,created_at)
 #  index_posts_user_and_likes                             (user_id,like_count DESC,created_at DESC) WHERE (post_number > 1)

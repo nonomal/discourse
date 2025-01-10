@@ -1,9 +1,13 @@
-import DiscourseRoute from "discourse/routes/discourse";
 import Group from "discourse/models/group";
+import DiscourseRoute from "discourse/routes/discourse";
 
 export default class AdminUserIndexRoute extends DiscourseRoute {
   model() {
     return this.modelFor("adminUser");
+  }
+
+  titleToken() {
+    return this.currentModel.username;
   }
 
   afterModel(model) {

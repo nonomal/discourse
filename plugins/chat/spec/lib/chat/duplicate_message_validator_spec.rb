@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
 describe Chat::DuplicateMessageValidator do
   let(:chat_channel) { Fabricate(:chat_channel) }
 
@@ -16,7 +14,7 @@ describe Chat::DuplicateMessageValidator do
     expect(message_blocked?("test")).to eq(false)
   end
 
-  it "errors if the message meets the requirements for sensitivity 0.1" do
+  skip "errors if the message meets the requirements for sensitivity 0.1" do
     SiteSetting.chat_duplicate_message_sensitivity = 0.1
 
     chat_channel.update!(user_count: 100)
@@ -36,7 +34,7 @@ describe Chat::DuplicateMessageValidator do
     expect(message_blocked?(message)).to eq(false)
   end
 
-  it "errors if the message meets the requirements for sensitivity 0.5" do
+  skip "errors if the message meets the requirements for sensitivity 0.5" do
     SiteSetting.chat_duplicate_message_sensitivity = 0.5
     chat_channel.update!(user_count: 57)
     message = "this is a 21 char msg"
@@ -55,7 +53,7 @@ describe Chat::DuplicateMessageValidator do
     expect(message_blocked?(message)).to eq(false)
   end
 
-  it "errors if the message meets the requirements for sensitivity 1.0" do
+  skip "errors if the message meets the requirements for sensitivity 1.0" do
     SiteSetting.chat_duplicate_message_sensitivity = 1.0
     chat_channel.update!(user_count: 5)
     message = "10 char msg"

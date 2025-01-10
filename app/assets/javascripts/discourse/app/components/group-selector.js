@@ -1,24 +1,23 @@
-import discourseComputed, {
-  observes,
-  on,
-} from "discourse-common/utils/decorators";
 import Component from "@ember/component";
-import I18n from "I18n";
-import { findRawTemplate } from "discourse-common/lib/raw-templates";
 import { isEmpty } from "@ember/utils";
+import { observes, on } from "@ember-decorators/object";
+import $ from "jquery";
+import { findRawTemplate } from "discourse-common/lib/raw-templates";
+import discourseComputed from "discourse-common/utils/decorators";
+import { i18n } from "discourse-i18n";
 
-export default Component.extend({
+export default class GroupSelector extends Component {
   @discourseComputed("placeholderKey")
   placeholder(placeholderKey) {
-    return placeholderKey ? I18n.t(placeholderKey) : "";
-  },
+    return placeholderKey ? i18n(placeholderKey) : "";
+  }
 
   @observes("groupNames")
   _update() {
     if (this.canReceiveUpdates === "true") {
       this._initializeAutocomplete({ updateData: true });
     }
-  },
+  }
 
   @on("didInsertElement")
   _initializeAutocomplete(opts) {
@@ -61,5 +60,5 @@ export default Component.extend({
       },
       template: findRawTemplate("group-selector-autocomplete"),
     });
-  },
-});
+  }
+}

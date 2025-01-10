@@ -1,4 +1,11 @@
+{{#let this.model.postStream as |postStream|}}
+  {{#unless (and postStream.loaded postStream.loadedAllPosts)}}
+    {{hide-application-footer}}
+  {{/unless}}
+{{/let}}
+
 <DiscourseTopic
+  {{sticky-avatars}}
   @multiSelect={{this.multiSelect}}
   @enteredAt={{this.enteredAt}}
   @topic={{this.model}}
@@ -10,10 +17,9 @@
       @tags={{this.model.tags}}
     />
     <AddTopicStatusClasses @topic={{this.model}} />
+    {{body-class (concat "archetype-" this.model.archetype)}}
     <div class="container">
       <DiscourseBanner
-        @user={{this.currentUser}}
-        @banner={{this.site.banner}}
         @overlay={{this.hasScrolled}}
         @hide={{this.model.errorLoading}}
       />
@@ -44,58 +50,76 @@
       >
         {{#if this.editingTopic}}
           <div class="edit-topic-title">
-            <PrivateMessageGlyph
-              @shouldShow={{this.model.isPrivateMessage}}
-              @tagName=""
-            />
+            <PrivateMessageGlyph @shouldShow={{this.model.isPrivateMessage}} />
 
-            <TextField
-              @id="edit-title"
-              @value={{this.buffered.title}}
-              @maxlength={{this.siteSettings.max_topic_title_length}}
-              @autofocus="true"
-            />
+            <div class="edit-title__wrapper">
+              <PluginOutlet
+                @name="edit-topic-title"
+                @outletArgs={{hash model=this.model buffered=this.buffered}}
+              >
+                <TextField
+                  @id="edit-title"
+                  @value={{this.buffered.title}}
+                  @maxlength={{this.siteSettings.max_topic_title_length}}
+                  @autofocus="true"
+                />
+              </PluginOutlet>
+            </div>
 
             {{#if this.showCategoryChooser}}
-              <CategoryChooser
-                @class="small"
-                @value={{this.buffered.category_id}}
-                @onChange={{action "topicCategoryChanged"}}
-              />
+              <div class="edit-category__wrapper">
+                <PluginOutlet
+                  @name="edit-topic-category"
+                  @outletArgs={{hash model=this.model buffered=this.buffered}}
+                >
+                  <CategoryChooser
+                    @value={{this.buffered.category_id}}
+                    @onChange={{action "topicCategoryChanged"}}
+                    class="small"
+                  />
+                </PluginOutlet>
+              </div>
             {{/if}}
 
             {{#if this.canEditTags}}
-              <MiniTagChooser
-                @value={{this.buffered.tags}}
-                @onChange={{action "topicTagsChanged"}}
-                @options={{hash
-                  filterable=true
-                  categoryId=this.buffered.category_id
-                  minimum=this.minimumRequiredTags
-                }}
-              />
+              <div class="edit-tags__wrapper">
+                <PluginOutlet
+                  @name="edit-topic-tags"
+                  @outletArgs={{hash model=this.model buffered=this.buffered}}
+                >
+                  <MiniTagChooser
+                    @value={{this.buffered.tags}}
+                    @onChange={{action "topicTagsChanged"}}
+                    @options={{hash
+                      filterable=true
+                      categoryId=this.buffered.category_id
+                      minimum=this.minimumRequiredTags
+                      filterPlaceholder="tagging.choose_for_topic"
+                      useHeaderFilter=true
+                    }}
+                  />
+                </PluginOutlet>
+              </div>
             {{/if}}
 
-            <span>
-              <PluginOutlet
-                @name="edit-topic"
-                @connectorTagName="div"
-                @outletArgs={{hash model=this.model buffered=this.buffered}}
-              />
-            </span>
+            <PluginOutlet
+              @name="edit-topic"
+              @connectorTagName="div"
+              @outletArgs={{hash model=this.model buffered=this.buffered}}
+            />
 
             <div class="edit-controls">
               <DButton
                 @action={{action "finishedEditingTopic"}}
-                @class="btn-primary submit-edit"
                 @icon="check"
                 @ariaLabel="composer.save_edit"
+                class="btn-primary submit-edit"
               />
               <DButton
                 @action={{action "cancelEditingTopic"}}
-                @class="btn-default cancel-edit"
-                @icon="times"
+                @icon="xmark"
                 @ariaLabel="composer.cancel"
+                class="btn-default cancel-edit"
               />
 
               {{#if this.canRemoveTopicFeaturedLink}}
@@ -105,7 +129,7 @@
                   class="remove-featured-link"
                   title={{i18n "composer.remove_featured_link"}}
                 >
-                  {{d-icon "times-circle"}}
+                  {{d-icon "circle-xmark"}}
                   {{this.featuredLinkDomain}}
                 </a>
               {{/if}}
@@ -121,12 +145,10 @@
                   @href={{this.pmPath}}
                   @title="topic_statuses.personal_message.title"
                   @ariaLabel="user.messages.inbox"
-                  @tagName=""
                 />
               {{else}}
                 <PrivateMessageGlyph
                   @shouldShow={{this.model.isPrivateMessage}}
-                  @tagName=""
                 />
               {{/if}}
             {{/unless}}
@@ -147,8 +169,8 @@
                 href
                 {{on "click" this.editTopic}}
                 class="edit-topic"
-                title={{i18n "edit"}}
-              >{{d-icon "pencil-alt"}}</a>
+                title={{i18n "edit_topic"}}
+              >{{d-icon "pencil"}}</a>
             {{/if}}
 
             <PluginOutlet
@@ -157,7 +179,13 @@
             />
           </h1>
 
-          <TopicCategory @topic={{this.model}} @class="topic-category" />
+          <PluginOutlet
+            @name="topic-category-wrapper"
+            @outletArgs={{hash topic=this.model}}
+          >
+            <TopicCategory @topic={{this.model}} class="topic-category" />
+          </PluginOutlet>
+
         {{/if}}
       </TopicTitle>
 
@@ -208,27 +236,44 @@
         />
       </div>
 
+      {{#if (and this.showBottomTopicMap this.loadedAllPosts)}}
+        <div class="topic-map --bottom">
+          <TopicMap
+            @model={{this.model}}
+            @topicDetails={{this.model.details}}
+            @postStream={{this.model.postStream}}
+            @showPMMap={{eq this.model.archetype "private_message"}}
+            @showInvite={{route-action "showInvite"}}
+            @removeAllowedGroup={{action "removeAllowedGroup"}}
+            @removeAllowedUser={{action "removeAllowedUser"}}
+          />
+        </div>
+      {{/if}}
+
       <PluginOutlet @name="above-timeline" @connectorTagName="div" />
 
       <TopicNavigation
-        @class="topic-navigation"
         @topic={{this.model}}
         @jumpToDate={{action "jumpToDate"}}
         @jumpToIndex={{action "jumpToIndex"}}
+        class="topic-navigation"
         as |info|
       >
         <PluginOutlet
           @name="topic-navigation"
           @connectorTagName="div"
-          @outletArgs={{hash topic=this.model}}
+          @outletArgs={{hash
+            topic=this.model
+            renderTimeline=info.renderTimeline
+            topicProgressExpanded=info.topicProgressExpanded
+          }}
         />
-
         {{#if info.renderTimeline}}
           <TopicTimeline
             @info={{info}}
             @model={{this.model}}
             @replyToPost={{action "replyToPost"}}
-            @showSummary={{action "showSummary"}}
+            @showTopReplies={{action "showTopReplies"}}
             @jumpToPostPrompt={{action "jumpToPostPrompt"}}
             @enteredIndex={{this.enteredIndex}}
             @prevEvent={{info.prevEvent}}
@@ -250,7 +295,6 @@
             @convertToPublicTopic={{action "convertToPublicTopic"}}
             @convertToPrivateMessage={{action "convertToPrivateMessage"}}
             @fullscreen={{info.topicProgressExpanded}}
-            @mobileView={{this.site.mobileView}}
           />
         {{else}}
           <TopicProgress
@@ -269,10 +313,8 @@
                 }}
               />
             </span>
-            <TopicAdminMenuButton
+            <TopicAdminMenu
               @topic={{this.model}}
-              @openUpwards="true"
-              @rightSide="true"
               @toggleMultiSelect={{action "toggleMultiSelect"}}
               @showTopicSlowModeUpdate={{route-action
                 "showTopicSlowModeUpdate"
@@ -291,6 +333,12 @@
             />
           </TopicProgress>
         {{/if}}
+
+        <PluginOutlet
+          @name="topic-navigation-bottom"
+          @connectorTagName="div"
+          @outletArgs={{hash model=this.model}}
+        />
       </TopicNavigation>
 
       <div class="row">
@@ -342,7 +390,7 @@
                 @unhidePost={{action "unhidePost"}}
                 @replyToPost={{action "replyToPost"}}
                 @toggleWiki={{action "toggleWiki"}}
-                @showSummary={{action "showSummary"}}
+                @showTopReplies={{action "showTopReplies"}}
                 @cancelFilter={{action "cancelFilter"}}
                 @removeAllowedUser={{action "removeAllowedUser"}}
                 @removeAllowedGroup={{action "removeAllowedGroup"}}
@@ -374,7 +422,10 @@
               {{#if this.model.pending_posts}}
                 <div class="pending-posts">
                   {{#each this.model.pending_posts as |pending|}}
-                    <div class="reviewable-item">
+                    <div
+                      class="reviewable-item"
+                      data-reviewable-id={{pending.id}}
+                    >
                       <div class="reviewable-meta-data">
                         <span class="reviewable-type">
                           {{i18n "review.awaiting_approval"}}
@@ -384,26 +435,24 @@
                         </span>
                       </div>
                       <div class="post-contents-wrapper">
-                        <ReviewableCreatedBy
-                          @user={{this.currentUser}}
-                          @tagName=""
-                        />
+                        <ReviewableCreatedBy @user={{this.currentUser}} />
                         <div class="post-contents">
-                          <ReviewableCreatedByName
-                            @user={{this.currentUser}}
-                            @tagName=""
-                          />
+                          <ReviewableCreatedByName @user={{this.currentUser}} />
                           <div class="post-body"><CookText
                               @rawText={{pending.raw}}
                             /></div>
                         </div>
                       </div>
                       <div class="reviewable-actions">
+                        <PluginOutlet
+                          @name="topic-additional-reviewable-actions"
+                          @outletArgs={{hash pending=pending}}
+                        />
                         <DButton
-                          @class="btn-danger"
                           @label="review.delete"
-                          @icon="trash-alt"
-                          @action={{action "deletePending" pending}}
+                          @icon="trash-can"
+                          @action={{fn (action "deletePending") pending}}
+                          class="btn-danger"
                         />
                       </div>
                     </div>
@@ -444,6 +493,7 @@
               <TopicTimerInfo
                 @topicClosed={{this.model.closed}}
                 @statusType={{this.model.topic_timer.status_type}}
+                @statusUpdate={{this.model.topic_status_update}}
                 @executeAt={{this.model.topic_timer.execute_at}}
                 @basedOnLastPost={{this.model.topic_timer.based_on_last_post}}
                 @durationMinutes={{this.model.topic_timer.duration_minutes}}
@@ -482,6 +532,11 @@
             {{/if}}
           </ConditionalLoadingSpinner>
 
+          <PluginOutlet
+            @name="topic-area-bottom"
+            @connectorTagName="div"
+            @outletArgs={{hash model=this.model}}
+          />
         </section>
       </div>
 
@@ -523,16 +578,11 @@
             @replyToPost={{action "replyToPost"}}
           />
         {{else}}
-          <div id="topic-footer-buttons">
-            <DButton
-              @icon="reply"
-              @class="btn-primary pull-right"
-              @action={{route-action "showLogin"}}
-              @label="topic.reply.title"
-            />
-          </div>
+          <AnonymousTopicFooterButtons @topic={{this.model}} />
         {{/if}}
       {{/if}}
+
+      <br />
 
       <span>
         <PluginOutlet
@@ -541,20 +591,12 @@
           @outletArgs={{hash model=this.model}}
         />
       </span>
-      <div
-        class="{{if
-            this.model.relatedMessages.length
-            'related-messages-wrapper'
-          }}
-          {{if this.model.suggestedTopics.length 'suggested-topics-wrapper'}}"
-      >
-        {{#if this.model.relatedMessages.length}}
-          <RelatedMessages @topic={{this.model}} />
-        {{/if}}
-        {{#if this.model.suggestedTopics.length}}
-          <SuggestedTopics @topic={{this.model}} />
-        {{/if}}
-      </div>
+
+      <MoreTopics @topic={{this.model}} />
+      <PluginOutlet
+        @name="topic-below-suggested"
+        @outletArgs={{hash model=this.model}}
+      />
     {{/if}}
   {{else}}
     <div class="container">
@@ -568,17 +610,17 @@
               {{#unless this.currentUser}}
                 <DButton
                   @action={{route-action "showLogin"}}
-                  @class="btn-primary topic-retry"
                   @icon="user"
                   @label="log_in"
+                  class="btn-primary topic-retry"
                 />
               {{/unless}}
             {{else}}
               <DButton
                 @action={{action "retryLoading"}}
-                @class="btn-primary topic-retry"
-                @icon="sync"
+                @icon="arrows-rotate"
                 @label="errors.buttons.again"
+                class="btn-primary topic-retry"
               />
             {{/if}}
           </div>
@@ -588,11 +630,11 @@
     </div>
   {{/if}}
 
-  <QuoteButton
+  <PostTextSelection
     @quoteState={{this.quoteState}}
     @selectText={{action "selectText"}}
+    @buildQuoteMarkdown={{this.buildQuoteMarkdown}}
     @editPost={{action "editPost"}}
     @topic={{this.model}}
-    @composerVisible={{this.composer.visible}}
   />
 </DiscourseTopic>

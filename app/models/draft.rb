@@ -1,11 +1,15 @@
 # frozen_string_literal: true
 
 class Draft < ActiveRecord::Base
-  NEW_TOPIC ||= "new_topic"
-  NEW_PRIVATE_MESSAGE ||= "new_private_message"
-  EXISTING_TOPIC ||= "topic_"
+  NEW_TOPIC = "new_topic"
+  NEW_PRIVATE_MESSAGE = "new_private_message"
+  EXISTING_TOPIC = "topic_"
 
   belongs_to :user
+
+  has_many :upload_references, as: :target, dependent: :delete_all
+
+  validates :draft_key, length: { maximum: 25 }
 
   after_commit :update_draft_count, on: %i[create destroy]
 
@@ -134,12 +138,14 @@ class Draft < ActiveRecord::Base
   end
 
   def self.clear(user, key, sequence)
-    return if !user || !user.id || !User.human_user_id?(user.id)
+    if !user || !user.id || !User.human_user_id?(user.id)
+      raise StandardError.new("user not present")
+    end
 
     current_sequence = DraftSequence.current(user, key)
 
     # bad caller is a reason to complain
-    raise Draft::OutOfSequence if sequence != current_sequence
+    raise Draft::OutOfSequence.new("bad draft sequence") if sequence != current_sequence
 
     # corrupt data is not a reason not to leave data
     Draft.where(user_id: user.id, draft_key: key).destroy_all
@@ -231,19 +237,18 @@ class Draft < ActiveRecord::Base
   end
 
   def self.cleanup!
-    DB.exec(<<~SQL)
-      DELETE FROM drafts
-       WHERE sequence < (
+    Draft.where(<<~SQL).in_batches(of: 100).destroy_all
+      sequence < (
         SELECT MAX(s.sequence)
           FROM draft_sequences s
-         WHERE s.draft_key = drafts.draft_key
-           AND s.user_id = drafts.user_id
+          WHERE s.draft_key = drafts.draft_key
+          AND s.user_id = drafts.user_id
       )
     SQL
 
     # remove old drafts
     delete_drafts_older_than_n_days = SiteSetting.delete_drafts_older_than_n_days.days.ago
-    Draft.where("updated_at < ?", delete_drafts_older_than_n_days).destroy_all
+    Draft.where("updated_at < ?", delete_drafts_older_than_n_days).in_batches(of: 100).destroy_all
 
     UserStat.update_draft_count
   end

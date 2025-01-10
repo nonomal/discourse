@@ -1,19 +1,20 @@
 # frozen_string_literal: true
 
 RSpec.describe BookmarkReminderNotificationHandler do
-  subject { described_class }
-
-  fab!(:user) { Fabricate(:user) }
+  fab!(:user)
 
   before { Discourse.redis.flushdb }
 
   describe "#send_notification" do
+    subject(:send_notification) { handler.send_notification }
+
+    let(:handler) { described_class.new(bookmark) }
     let!(:bookmark) do
       Fabricate(:bookmark_next_business_day_reminder, user: user, bookmarkable: Fabricate(:post))
     end
 
     it "creates a bookmark reminder notification with the correct details" do
-      subject.new(bookmark).send_notification
+      send_notification
       notif = bookmark.user.notifications.last
       expect(notif.notification_type).to eq(Notification.types[:bookmark_reminder])
       expect(notif.topic_id).to eq(bookmark.bookmarkable.topic_id)
@@ -32,7 +33,7 @@ RSpec.describe BookmarkReminderNotificationHandler do
       end
 
       it "does not send a notification and updates last notification attempt time" do
-        expect { subject.new(bookmark).send_notification }.not_to change { Notification.count }
+        expect { send_notification }.not_to change { Notification.count }
         expect(bookmark.reload.reminder_last_sent_at).not_to be_blank
       end
     end
@@ -46,12 +47,12 @@ RSpec.describe BookmarkReminderNotificationHandler do
       end
 
       it "deletes the bookmark after the reminder gets sent" do
-        subject.new(bookmark).send_notification
+        send_notification
         expect(Bookmark.find_by(id: bookmark.id)).to eq(nil)
       end
 
       it "changes the TopicUser bookmarked column to false" do
-        subject.new(bookmark).send_notification
+        send_notification
         expect(TopicUser.find_by(topic: bookmark.bookmarkable.topic, user: user).bookmarked).to eq(
           false,
         )
@@ -67,7 +68,7 @@ RSpec.describe BookmarkReminderNotificationHandler do
         end
 
         it "does not change the TopicUser bookmarked column to false" do
-          subject.new(bookmark).send_notification
+          send_notification
           expect(
             TopicUser.find_by(topic: bookmark.bookmarkable.topic, user: user).bookmarked,
           ).to eq(true)
@@ -82,8 +83,20 @@ RSpec.describe BookmarkReminderNotificationHandler do
       end
 
       it "resets reminder_at after the reminder gets sent" do
-        subject.new(bookmark).send_notification
+        send_notification
         expect(Bookmark.find_by(id: bookmark.id).reminder_at).to eq(nil)
+      end
+    end
+
+    context "when the auto_delete_preference is never" do
+      before do
+        TopicUser.create!(topic: bookmark.bookmarkable.topic, user: user, bookmarked: true)
+        bookmark.update(auto_delete_preference: Bookmark.auto_delete_preferences[:never])
+      end
+
+      it "does not reset reminder_at after the reminder gets sent" do
+        send_notification
+        expect(Bookmark.find_by(id: bookmark.id).reminder_at).not_to eq(nil)
       end
     end
   end

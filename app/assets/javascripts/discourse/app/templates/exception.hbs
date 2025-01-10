@@ -16,7 +16,7 @@
       {{/if}}
       <div class="desc">
         {{#if this.networkFixed}}
-          {{d-icon "check-circle"}}
+          {{d-icon "circle-check"}}
         {{/if}}
 
         {{this.desc}}
@@ -27,7 +27,7 @@
             @icon={{buttonData.icon}}
             @action={{buttonData.action}}
             @label={{buttonData.key}}
-            @class={{buttonData.classes}}
+            class={{buttonData.classes}}
           />
         {{/each}}
         <ConditionalLoadingSpinner @condition={{this.loading}} />

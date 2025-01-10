@@ -1,9 +1,9 @@
+import { getOwner } from "@ember/owner";
+import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
+import sinon from "sinon";
 import RestAdapter from "discourse/adapters/rest";
 import RestModel from "discourse/models/rest";
-import sinon from "sinon";
-import { getOwner } from "discourse-common/lib/get-owner";
-import { setupTest } from "ember-qunit";
 
 module("Unit | Model | rest-model", function (hooks) {
   setupTest(hooks);
@@ -20,96 +20,97 @@ module("Unit | Model | rest-model", function (hooks) {
 
     getOwner(this).register("model:grape", Grape);
     const g = store.createRecord("grape", { store, percent: 0.4 });
-    assert.strictEqual(g.inverse, 0.6, "it runs `munge` on `create`");
+    assert.strictEqual(g.inverse, 0.6, "runs `munge` on `create`");
   });
 
   test("update", async function (assert) {
     const store = getOwner(this).lookup("service:store");
     const widget = await store.find("widget", 123);
     assert.strictEqual(widget.name, "Trout Lure");
-    assert.ok(!widget.isSaving, "it is not saving");
+    assert.false(widget.isSaving, "is not saving");
 
     const spyBeforeUpdate = sinon.spy(widget, "beforeUpdate");
     const spyAfterUpdate = sinon.spy(widget, "afterUpdate");
     const promise = widget.update({ name: "new name" });
-    assert.ok(widget.isSaving, "it is saving");
-    assert.ok(spyBeforeUpdate.calledOn(widget));
+    assert.true(widget.isSaving, "is saving");
+    assert.true(spyBeforeUpdate.calledOn(widget));
 
     const result = await promise;
-    assert.ok(spyAfterUpdate.calledOn(widget));
-    assert.ok(!widget.isSaving, "it is no longer saving");
+    assert.true(spyAfterUpdate.calledOn(widget));
+    assert.false(widget.isSaving, "is no longer saving");
     assert.strictEqual(widget.name, "new name");
 
-    assert.ok(result.target, "it has a reference to the record");
+    assert.notStrictEqual(
+      result.target,
+      undefined,
+      "has a reference to the record"
+    );
     assert.strictEqual(result.target.name, widget.name);
   });
 
   test("updating simultaneously", async function (assert) {
-    assert.expect(2);
-
     const store = getOwner(this).lookup("service:store");
     const widget = await store.find("widget", 123);
 
     const firstPromise = widget.update({ name: "new name" });
     const secondPromise = widget.update({ name: "new name" });
 
-    firstPromise.then(function () {
-      assert.ok(true, "the first promise succeeds");
-    });
+    firstPromise.then(() => assert.true(true, "the first promise succeeds"));
+    secondPromise.catch(() => assert.true(true, "the second promise fails"));
 
-    secondPromise.catch(function () {
-      assert.ok(true, "the second promise fails");
-    });
+    await Promise.allSettled([firstPromise, secondPromise]);
   });
 
   test("save new", async function (assert) {
     const store = getOwner(this).lookup("service:store");
     const widget = store.createRecord("widget");
 
-    assert.ok(widget.isNew, "it is a new record");
-    assert.ok(!widget.isCreated, "it is not created");
-    assert.ok(!widget.isSaving, "it is not saving");
+    assert.true(widget.isNew, "is a new record");
+    assert.false(widget.isCreated, "is not created");
+    assert.false(widget.isSaving, "is not saving");
 
     const spyBeforeCreate = sinon.spy(widget, "beforeCreate");
     const spyAfterCreate = sinon.spy(widget, "afterCreate");
     const promise = widget.save({ name: "Evil Widget" });
-    assert.ok(widget.isSaving, "it is not saving");
-    assert.ok(spyBeforeCreate.calledOn(widget));
+    assert.true(widget.isSaving, "is not saving");
+    assert.true(spyBeforeCreate.calledOn(widget));
 
     const result = await promise;
-    assert.ok(spyAfterCreate.calledOn(widget));
-    assert.ok(!widget.isSaving, "it is no longer saving");
-    assert.ok(widget.id, "it has an id");
-    assert.ok(widget.name, "Evil Widget");
-    assert.ok(widget.isCreated, "it is created");
-    assert.ok(!widget.isNew, "it is no longer new");
+    assert.true(spyAfterCreate.calledOn(widget));
+    assert.false(widget.isSaving, "is no longer saving");
+    assert.notStrictEqual(widget.id, undefined, "has an id");
+    assert.strictEqual(widget.name, "Evil Widget");
+    assert.true(widget.isCreated, " is created");
+    assert.false(widget.isNew, "is no longer new");
 
-    assert.ok(result.target, "it has a reference to the record");
+    assert.notStrictEqual(
+      result.target,
+      undefined,
+      "has a reference to the record"
+    );
     assert.strictEqual(result.target.name, widget.name);
   });
 
-  test("creating simultaneously", function (assert) {
-    assert.expect(2);
-
+  test("creating simultaneously", async function (assert) {
     const store = getOwner(this).lookup("service:store");
     const widget = store.createRecord("widget");
 
     const firstPromise = widget.save({ name: "Evil Widget" });
     const secondPromise = widget.save({ name: "Evil Widget" });
-    firstPromise.then(function () {
-      assert.ok(true, "the first promise succeeds");
-    });
 
-    secondPromise.catch(function () {
-      assert.ok(true, "the second promise fails");
-    });
+    firstPromise.then(() => assert.true(true, "the first promise succeeds"));
+    secondPromise.catch(() => assert.true(true, "the second promise fails"));
+
+    await Promise.allSettled([firstPromise, secondPromise]);
   });
 
   test("destroyRecord", async function (assert) {
     const store = getOwner(this).lookup("service:store");
     const widget = await store.find("widget", 123);
 
-    assert.ok(await widget.destroyRecord());
+    assert.deepEqual(await widget.destroyRecord(), {
+      success: true,
+    });
   });
 
   test("custom api name", async function (assert) {
@@ -131,7 +132,7 @@ module("Unit | Model | rest-model", function (hooks) {
     // Create
     const widget = store.createRecord("my-widget");
     await widget.save({ name: "Evil Widget" });
-    assert.strictEqual(widget.id, 100, "it saved a new record successfully");
+    assert.strictEqual(widget.id, 100, "saved a new record successfully");
     assert.strictEqual(widget.name, "Evil Widget");
 
     // Update

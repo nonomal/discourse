@@ -1,27 +1,28 @@
-import {
-  acceptance,
-  exists,
-  query,
-} from "discourse/tests/helpers/qunit-helpers";
 import { click, fillIn, visit } from "@ember/test-helpers";
-import selectKit from "discourse/tests/helpers/select-kit-helper";
 import { test } from "qunit";
+import { acceptance } from "discourse/tests/helpers/qunit-helpers";
+import selectKit from "discourse/tests/helpers/select-kit-helper";
+import { setPrefix } from "discourse-common/lib/get-url";
 
 acceptance("Tag Groups", function (needs) {
   needs.user();
   needs.settings({ tagging_enabled: true });
   needs.pretender((server, helper) => {
+    const tagGroups = {
+      tag_group: {
+        id: 42,
+        name: "test tag group",
+        tag_names: ["monkey"],
+        parent_tag_name: [],
+        one_per_topic: false,
+        permissions: { everyone: 1 },
+      },
+    };
     server.post("/tag_groups", () => {
-      return helper.response({
-        tag_group: {
-          id: 42,
-          name: "test tag group",
-          tag_names: ["monkey"],
-          parent_tag_name: [],
-          one_per_topic: false,
-          permissions: { everyone: 1 },
-        },
-      });
+      return helper.response(tagGroups);
+    });
+    server.get("/forum/tag_groups", () => {
+      return helper.response(tagGroups);
     });
 
     server.get("/groups/search.json", () => {
@@ -53,7 +54,7 @@ acceptance("Tag Groups", function (needs) {
 
     await tags.expand();
     await tags.deselectItemByValue("monkey");
-    assert.ok(!query(".tag-group-content .btn.btn-danger").disabled);
+    assert.dom(".tag-group-content .btn.btn-danger").isEnabled();
   });
 
   test("tag groups can have multiple groups added to them", async function (assert) {
@@ -72,14 +73,22 @@ acceptance("Tag Groups", function (needs) {
     await groups.selectRowByIndex(1);
     await groups.selectRowByIndex(0);
 
-    assert.ok(!query(".tag-group-content .btn.btn-primary").disabled);
+    assert.dom(".tag-group-content .btn.btn-primary").isEnabled();
 
     await click(".tag-group-content .btn.btn-primary");
     await click(".tag-groups-sidebar li:first-child a");
 
-    assert.ok(
-      exists("#visible-permission:checked"),
-      "selected permission does not change after saving"
-    );
+    assert
+      .dom("#visible-permission:checked")
+      .exists("selected permission does not change after saving");
+  });
+
+  test("going back to tags supports subfolder", async function (assert) {
+    setPrefix("/forum");
+
+    await visit("/tag_groups");
+    assert
+      .dom("a.tag-groups--back")
+      .hasAttribute("href", "/forum/tags", "supports subfolder");
   });
 });

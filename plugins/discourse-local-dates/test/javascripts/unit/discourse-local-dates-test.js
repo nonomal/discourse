@@ -1,8 +1,11 @@
+import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
+import freezeTime from "../helpers/freeze-time";
 import { applyLocalDates } from "../initializers/discourse-local-dates";
-import { freezeTime } from "./local-date-builder-test";
 
-module("Unit | Discourse Local Dates | discourse-local-dates", function () {
+module("Unit | discourse-local-dates", function (hooks) {
+  setupTest(hooks);
+
   function createElementFromHTML(htmlString) {
     const div = document.createElement("div");
     div.innerHTML = htmlString.trim();
@@ -41,16 +44,12 @@ module("Unit | Discourse Local Dates | discourse-local-dates", function () {
     freezeTime(
       { date: "2022-10-07T10:10:10", timezone: "Asia/Singapore" },
       () => {
-        applyLocalDates(dateElements, { discourse_local_dates_enabled: true });
+        applyLocalDates(dateElements, {
+          discourse_local_dates_enabled: true,
+        });
 
-        assert.equal(
-          from.querySelector(".relative-time").textContent,
-          "Yesterday 5:21 PM"
-        );
-        assert.equal(
-          to.querySelector(".relative-time").textContent,
-          "10:22 PM (Singapore)"
-        );
+        assert.dom(".relative-time", from).hasText("Yesterday 5:21 PM");
+        assert.dom(".relative-time", to).hasText("10:22 PM (Singapore)");
       }
     );
   });
@@ -64,16 +63,12 @@ module("Unit | Discourse Local Dates | discourse-local-dates", function () {
     freezeTime(
       { date: "2022-10-07T10:10:10", timezone: "Asia/Singapore" },
       () => {
-        applyLocalDates(dateElements, { discourse_local_dates_enabled: true });
+        applyLocalDates(dateElements, {
+          discourse_local_dates_enabled: true,
+        });
 
-        assert.equal(
-          from.querySelector(".relative-time").textContent,
-          "Yesterday 5:21 PM"
-        );
-        assert.equal(
-          to.querySelector(".relative-time").textContent,
-          "Yesterday"
-        );
+        assert.dom(".relative-time", from).hasText("Yesterday 5:21 PM");
+        assert.dom(".relative-time", to).hasText("Yesterday");
       }
     );
   });

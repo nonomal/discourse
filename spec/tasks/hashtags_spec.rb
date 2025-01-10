@@ -1,17 +1,11 @@
 # frozen_string_literal: true
 
 RSpec.describe "tasks/hashtags" do
-  before do
-    Rake::Task.clear
-    Discourse::Application.load_tasks
-  end
-
   describe "hashtag:mark_old_format_for_rebake" do
     fab!(:category) { Fabricate(:category, slug: "support") }
 
-    before { SiteSetting.enable_experimental_hashtag_autocomplete = false }
-
     it "sets the baked_version to 0 for matching posts" do
+      hashtag_html = PrettyText.cook("#support").gsub("<p>", "").gsub("</p>", "")
       post_1 = Fabricate(:post, raw: "This is a cool #support hashtag")
       post_2 =
         Fabricate(
@@ -19,12 +13,14 @@ RSpec.describe "tasks/hashtags" do
           raw:
             "Some other thing which will not match <a class=\"hashtag-wow\">some weird custom thing</a>",
         )
-
-      SiteSetting.enable_experimental_hashtag_autocomplete = true
       post_3 = Fabricate(:post, raw: "This is a cool #support hashtag")
-      SiteSetting.enable_experimental_hashtag_autocomplete = false
 
-      capture_stdout { Rake::Task["hashtags:mark_old_format_for_rebake"].invoke }
+      # Update to use the old hashtag format.
+      post_1.update!(
+        cooked: post_1.cooked.gsub(hashtag_html, "<span class=\"hashtag\"'>#support</span>"),
+      )
+
+      capture_stdout { invoke_rake_task("hashtags:mark_old_format_for_rebake") }
 
       [post_1, post_2, post_3].each(&:reload)
 

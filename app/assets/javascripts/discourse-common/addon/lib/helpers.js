@@ -1,8 +1,9 @@
 import Helper from "@ember/component/helper";
-import RawHandlebars from "discourse-common/lib/raw-handlebars";
 import { get } from "@ember/object";
-import { htmlSafe } from "@ember/template";
 import { dasherize } from "@ember/string";
+import { htmlSafe } from "@ember/template";
+import deprecated from "discourse-common/lib/deprecated";
+import RawHandlebars from "discourse-common/lib/raw-handlebars";
 
 export function makeArray(obj) {
   if (obj === null || obj === undefined) {
@@ -12,6 +13,11 @@ export function makeArray(obj) {
 }
 
 export function htmlHelper(fn) {
+  deprecated(
+    `htmlHelper is deprecated. Use a plain function and \`htmlSafe()\` from "@ember/template" instead.`,
+    { id: "discourse.html-helper" }
+  );
+
   return Helper.helper(function (...args) {
     args =
       args.length > 1 ? args[0].concat({ hash: args[args.length - 1] }) : args;
@@ -82,7 +88,30 @@ function resolveParams(ctx, options) {
   return params;
 }
 
+/**
+ * Register a helper for Ember and raw-hbs. This exists for
+ * legacy reasons, and should be avoided in new code. Instead, you should
+ * do `export default ...` from a `helpers/*.js` file.
+ */
 export function registerUnbound(name, fn) {
+  deprecated(
+    `[registerUnbound ${name}] registerUnbound is deprecated. Instead, you should export a default function from 'discourse/helpers/${name}.js'. If the helper is also used in raw-hbs, you can register it using 'registerRawHelper'.`,
+    { id: "discourse.register-unbound" }
+  );
+
+  _helpers[name] = class extends Helper {
+    compute(params, args) {
+      return fn(...params, args);
+    }
+  };
+
+  registerRawHelper(name, fn);
+}
+
+/**
+ * Register a helper for raw-hbs only
+ */
+export function registerRawHelper(name, fn) {
   const func = function (...args) {
     const options = args.pop();
     const properties = args;
@@ -99,8 +128,5 @@ export function registerUnbound(name, fn) {
     return fn.call(this, ...properties, resolveParams(this, options));
   };
 
-  _helpers[name] = Helper.extend({
-    compute: (params, args) => fn(...params, args),
-  });
   RawHandlebars.registerHelper(name, func);
 }

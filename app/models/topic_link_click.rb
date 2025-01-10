@@ -10,8 +10,6 @@ class TopicLinkClick < ActiveRecord::Base
   validates_presence_of :topic_link_id
 
   ALLOWED_REDIRECT_HOSTNAMES = Set.new(%W[www.youtube.com youtu.be])
-  include ActiveSupport::Deprecation::DeprecatedConstantAccessor
-  deprecate_constant "WHITELISTED_REDIRECT_HOSTNAMES", "TopicLinkClick::ALLOWED_REDIRECT_HOSTNAMES"
 
   # Create a click from a URL and post_id
   def self.create_from(args = {})
@@ -88,7 +86,7 @@ class TopicLinkClick < ActiveRecord::Base
       ).first
 
     # If no link is found...
-    unless link.present?
+    if link.blank?
       # ... return the url for relative links or when using the same host
       return url if url =~ %r{\A/[^/]} || uri.try(:host) == Discourse.current_hostname
 

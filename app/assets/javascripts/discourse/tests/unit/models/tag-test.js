@@ -1,6 +1,6 @@
-import { module, test } from "qunit";
-import { getOwner } from "discourse-common/lib/get-owner";
+import { getOwner } from "@ember/owner";
 import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
 
 module("Unit | Model | tag", function (hooks) {
   setupTest(hooks);
@@ -22,10 +22,10 @@ module("Unit | Model | tag", function (hooks) {
   test("pmOnly", function (assert) {
     const tag = this.store.createRecord("tag", { pm_only: false });
 
-    assert.notOk(tag.pmOnly);
+    assert.false(tag.pmOnly);
 
     tag.set("pm_only", true);
 
-    assert.ok(tag.pmOnly);
+    assert.true(tag.pmOnly);
   });
 });

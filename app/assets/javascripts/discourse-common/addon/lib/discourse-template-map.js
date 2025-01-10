@@ -1,3 +1,5 @@
+import deprecated from "./deprecated";
+
 const pluginRegex = /^discourse\/plugins\/([^\/]+)\/(.*)$/;
 const themeRegex = /^discourse\/theme-([^\/]+)\/(.*)$/;
 
@@ -8,7 +10,7 @@ function appendToCache(cache, key, value) {
   cache.set(key, cachedValue);
 }
 
-const NAMESPACES = ["discourse/", "wizard/", "admin/"];
+const NAMESPACES = ["discourse/", "admin/"];
 
 function isInRecognisedNamespace(moduleName) {
   for (const ns of NAMESPACES) {
@@ -77,12 +79,28 @@ class DiscourseTemplateMap {
    * theme/plugin namespaces and overrides.
    */
   resolve(name) {
-    for (const cache of this.prioritizedCaches) {
-      const val = cache.get(name);
-      if (val) {
-        return val[val.length - 1];
+    const [themeMatch, pluginMatch, coreMatch] = this.prioritizedCaches.map(
+      (cache) => {
+        const val = cache.get(name);
+        if (val) {
+          return val[val.length - 1];
+        }
       }
+    );
+
+    if ((themeMatch || pluginMatch) && coreMatch) {
+      deprecated(
+        `[${
+          themeMatch || pluginMatch
+        }] Overriding templates is deprecated, and will soon be disabled. Use plugin outlets, CSS, or other customization APIs instead.`,
+        {
+          id: "discourse.resolver-template-overrides",
+          url: "https://meta.discourse.org/t/247487",
+        }
+      );
     }
+
+    return themeMatch || pluginMatch || coreMatch;
   }
 
   /**

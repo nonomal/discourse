@@ -16,49 +16,53 @@ class Report
     include_subcategories
   ]
 
-  include Reports::PostEdits
-  include Reports::TopTrafficSources
-  include Reports::TopicsWithNoResponse
-  include Reports::DauByMau
-  include Reports::FlagsStatus
-  include Reports::Emails
-  include Reports::Likes
-  include Reports::SystemPrivateMessages
-  include Reports::UsersByType
-  include Reports::StorageStats
-  include Reports::NotifyModeratorsPrivateMessages
-  include Reports::SuspiciousLogins
-  include Reports::TopReferredTopics
-  include Reports::Signups
-  include Reports::NotifyUserPrivateMessages
-  include Reports::NewContributors
-  include Reports::TrendingSearch
-  include Reports::UserToUserPrivateMessages
-  include Reports::Flags
-  include Reports::Topics
-  include Reports::Posts
   include Reports::Bookmarks
-  include Reports::StaffLogins
-  include Reports::DailyEngagedUsers
-  include Reports::UserToUserPrivateMessagesWithReplies
-  include Reports::MobileVisits
-  include Reports::TopReferrers
-  include Reports::WebCrawlers
-  include Reports::ModeratorsActivity
-  include Reports::TopIgnoredUsers
-  include Reports::UserFlaggingRatio
-  include Reports::TrustLevelGrowth
-  include Reports::ConsolidatedPageViews
   include Reports::ConsolidatedApiRequests
-  include Reports::Visits
-  include Reports::TimeToFirstResponse
-  include Reports::UsersByTrustLevel
+  include Reports::ConsolidatedPageViews
+  include Reports::ConsolidatedPageViewsBrowserDetection
+  include Reports::SiteTraffic
+  include Reports::DailyEngagedUsers
+  include Reports::DauByMau
+  include Reports::Emails
+  include Reports::Flags
+  include Reports::FlagsStatus
+  include Reports::Likes
+  include Reports::MobileVisits
   include Reports::ModeratorWarningPrivateMessages
+  include Reports::ModeratorsActivity
+  include Reports::NewContributors
+  include Reports::NotifyModeratorsPrivateMessages
+  include Reports::NotifyUserPrivateMessages
+  include Reports::PostEdits
+  include Reports::Posts
   include Reports::ProfileViews
+  include Reports::Signups
+  include Reports::StaffLogins
+  include Reports::StorageStats
+  include Reports::SuspiciousLogins
+  include Reports::SystemPrivateMessages
+  include Reports::TimeToFirstResponse
+  include Reports::TopIgnoredUsers
+  include Reports::TopReferredTopics
+  include Reports::TopReferrers
+  include Reports::TopTrafficSources
   include Reports::TopUploads
   include Reports::TopUsersByLikesReceived
-  include Reports::TopUsersByLikesReceivedFromInferiorTrustLevel
   include Reports::TopUsersByLikesReceivedFromAVarietyOfPeople
+  include Reports::TopUsersByLikesReceivedFromInferiorTrustLevel
+  include Reports::Topics
+  include Reports::TopicsWithNoResponse
+  include Reports::TopicViewStats
+  include Reports::TrendingSearch
+  include Reports::TrustLevelGrowth
+  include Reports::UserFlaggingRatio
+  include Reports::UserToUserPrivateMessages
+  include Reports::UserToUserPrivateMessagesWithReplies
+  include Reports::UsersByTrustLevel
+  include Reports::UsersByType
+  include Reports::Visits
+  include Reports::WebCrawlers
+  include Reports::WebHookEventsDailyAggregate
 
   attr_accessor :type,
                 :data,
@@ -76,8 +80,6 @@ class Report
                 :icon,
                 :modes,
                 :prev_data,
-                :prev_start_date,
-                :prev_end_date,
                 :dates_filtering,
                 :error,
                 :primary_color,
@@ -129,14 +131,6 @@ class Report
   end
 
   def add_filter(name, options = {})
-    if options[:type].blank?
-      options[:type] = name
-      Discourse.deprecate(
-        "#{name} filter should define a `:type` option. Temporarily setting type to #{name}.",
-        drop_from: "2.9.0",
-      )
-    end
-
     available_filters[name] = options
   end
 
@@ -230,6 +224,11 @@ class Report
     singleton_class.instance_eval { define_method("report_#{name}", &block) }
   end
 
+  # Only used for testing.
+  def Report.remove_report(name)
+    singleton_class.instance_eval { remove_method("report_#{name}") }
+  end
+
   def self._get(type, opts = nil)
     opts ||= {}
 
@@ -301,18 +300,19 @@ class Report
     report
   end
 
+  # NOTE: Once use_legacy_pageviews is always false or no longer needed
+  # we will no longer support the page_view_anon and page_view_logged_in reports,
+  # they can be removed.
   def self.req_report(report, filter = nil)
     data =
+      # For this report we intentionally do not want to count mobile pageviews.
       if filter == :page_view_total
-        ApplicationRequest.where(
-          req_type: [
-            ApplicationRequest
-              .req_types
-              .reject { |k, v| k =~ /mobile/ }
-              .map { |k, v| v if k =~ /page_view/ }
-              .compact,
-          ].flatten,
-        )
+        SiteSetting.use_legacy_pageviews ? legacy_page_view_requests : page_view_requests
+        # This is a separate report because if people have switched over
+        # to _not_ use legacy pageviews, we want to show both a Pageviews
+        # and Legacy Pageviews report.
+      elsif filter == :page_view_legacy_total
+        legacy_page_view_requests
       else
         ApplicationRequest.where(req_type: ApplicationRequest.req_types[filter])
       end
@@ -333,6 +333,31 @@ class Report
       data.where("date >= ? AND date < ?", (report.start_date - 31.days), report.start_date).sum(
         :count,
       )
+  end
+
+  # We purposefully exclude "browser" pageviews. See
+  # `ConsolidatedPageViewsBrowserDetection` for browser pageviews.
+  def self.legacy_page_view_requests
+    ApplicationRequest.where(
+      req_type: [
+        ApplicationRequest.req_types[:page_view_crawler],
+        ApplicationRequest.req_types[:page_view_anon],
+        ApplicationRequest.req_types[:page_view_logged_in],
+      ].flatten,
+    )
+  end
+
+  # We purposefully exclude "crawler" pageviews here and by
+  # only doing browser pageviews we are excluding "other" pageviews
+  # too. This is to reflect what is shown in the "Site traffic" report
+  # by default.
+  def self.page_view_requests
+    ApplicationRequest.where(
+      req_type: [
+        ApplicationRequest.req_types[:page_view_anon_browser],
+        ApplicationRequest.req_types[:page_view_logged_in_browser],
+      ].flatten,
+    )
   end
 
   def self.report_about(report, subject_class, report_method = :count_per_day)
@@ -422,18 +447,20 @@ class Report
     add_counts report, subject, "topics.created_at"
   end
 
-  def lighten_color(hex, amount)
-    hex = adjust_hex(hex)
-    rgb = hex.scan(/../).map { |color| color.hex }
-    rgb[0] = [(rgb[0].to_i + 255 * amount).round, 255].min
-    rgb[1] = [(rgb[1].to_i + 255 * amount).round, 255].min
-    rgb[2] = [(rgb[2].to_i + 255 * amount).round, 255].min
-    "#%02x%02x%02x" % rgb
-  end
-
   def rgba_color(hex, opacity = 1)
     rgbs = hex_to_rgbs(adjust_hex(hex))
     "rgba(#{rgbs.join(",")},#{opacity})"
+  end
+
+  def colors
+    {
+      turquoise: "#1EB8D1",
+      lime: "#9BC53D",
+      purple: "#721D8D",
+      magenta: "#E84A5F",
+      brown: "#8A6916",
+      yellow: "#FFCD56",
+    }
   end
 
   private

@@ -60,15 +60,6 @@ class PostDestroyer
   end
 
   def destroy
-    payload = WebHook.generate_payload(:post, @post) if WebHook.active_web_hooks(:post).exists?
-    is_first_post = @post.is_first_post? && @topic
-    has_topic_web_hooks = is_first_post && WebHook.active_web_hooks(:topic).exists?
-
-    if has_topic_web_hooks
-      topic_view = TopicView.new(@topic.id, Discourse.system_user, skip_staff_action: true)
-      topic_payload = WebHook.generate_payload(:topic, topic_view, WebHookTopicViewSerializer)
-    end
-
     delete_removed_posts_after =
       @opts[:delete_removed_posts_after] || SiteSetting.delete_removed_posts_after
 
@@ -82,14 +73,25 @@ class PostDestroyer
     UserActionManager.post_destroyed(@post)
 
     DiscourseEvent.trigger(:post_destroyed, @post, @opts, @user)
-    WebHook.enqueue_post_hooks(:post_destroyed, @post, payload)
+    if WebHook.active_web_hooks(:post_destroyed).exists?
+      payload = WebHook.generate_payload(:post, @post)
+      WebHook.enqueue_post_hooks(:post_destroyed, @post, payload)
+    end
     Jobs.enqueue(:sync_topic_user_bookmarked, topic_id: @topic.id) if @topic
 
+    is_first_post = @post.is_first_post? && @topic
     if is_first_post
       UserProfile.remove_featured_topic_from_all_profiles(@topic)
       UserActionManager.topic_destroyed(@topic)
       DiscourseEvent.trigger(:topic_destroyed, @topic, @user)
-      WebHook.enqueue_topic_hooks(:topic_destroyed, @topic, topic_payload) if has_topic_web_hooks
+      if WebHook.active_web_hooks(:topic_destroyed).exists?
+        topic_view = TopicView.new(@topic.id, Discourse.system_user, skip_staff_action: true)
+        topic_payload = WebHook.generate_payload(:topic, topic_view, WebHookTopicViewSerializer)
+        WebHook.enqueue_topic_hooks(:topic_destroyed, @topic, topic_payload)
+      end
+      if SiteSetting.tos_topic_id == @topic.id || SiteSetting.privacy_topic_id == @topic.id
+        Discourse.clear_urls!
+      end
     end
   end
 
@@ -122,6 +124,9 @@ class PostDestroyer
         )
       end
       update_imap_sync(@post, false)
+      if SiteSetting.tos_topic_id == @topic.id || SiteSetting.privacy_topic_id == @topic.id
+        Discourse.clear_urls!
+      end
     end
   end
 
@@ -185,11 +190,15 @@ class PostDestroyer
         if @post.topic && @post.is_first_post?
           StaffActionLogger.new(@user).log_topic_delete_recover(
             @post.topic,
-            "delete_topic",
+            permanent? ? "delete_topic_permanently" : "delete_topic",
             @opts.slice(:context),
           )
         else
-          StaffActionLogger.new(@user).log_post_deletion(@post, @opts.slice(:context))
+          StaffActionLogger.new(@user).log_post_deletion(
+            @post,
+            **@opts.slice(:context),
+            permanent: permanent?,
+          )
         end
       end
 
@@ -202,6 +211,13 @@ class PostDestroyer
       update_associated_category_latest_topic
       update_user_counts if !permanent?
       TopicUser.update_post_action_cache(post_id: @post.id)
+
+      if permanent?
+        if @post.topic && @post.is_first_post?
+          UserHistory.where(topic_id: @post.topic.id).update_all(details: "(permanently deleted)")
+        end
+        UserHistory.where(post_id: @post.id).update_all(details: "(permanently deleted)")
+      end
 
       DB.after_commit do
         if @opts[:reviewable]
@@ -299,13 +315,11 @@ class PostDestroyer
   def make_previous_post_the_last_one
     last_post =
       Post
-        .where("topic_id = ? and id <> ?", @post.topic_id, @post.id)
         .select(:created_at, :user_id, :post_number)
         .where("topic_id = ? and id <> ?", @post.topic_id, @post.id)
         .where.not(user_id: nil)
         .where.not(post_type: Post.types[:whisper])
         .order("created_at desc")
-        .limit(1)
         .first
 
     if last_post.present?
@@ -331,6 +345,10 @@ class PostDestroyer
     Jobs.enqueue(:feature_topic_users, topic_id: @post.topic_id)
   end
 
+  def post_action_type_view
+    @post_action_type_view ||= PostActionTypeView.new
+  end
+
   def trash_public_post_actions
     if public_post_actions = PostAction.publics.where(post_id: @post.id)
       public_post_actions.each { |pa| permanent? ? pa.destroy! : pa.trash!(@user) }
@@ -340,7 +358,7 @@ class PostDestroyer
       @post.custom_fields["deleted_public_actions"] = public_post_actions.ids
       @post.save_custom_fields
 
-      f = PostActionType.public_types.map { |k, _| ["#{k}_count", 0] }
+      f = post_action_type_view.public_types.map { |k, _| ["#{k}_count", 0] }
       Post.with_deleted.where(id: @post.id).update_all(Hash[*f.flatten])
     end
   end
@@ -370,7 +388,7 @@ class PostDestroyer
     # ReviewableScore#types is a superset of PostActionType#flag_types.
     # If the reviewable score type is not on the latter, it means it's not a flag by a user and
     #  must be an automated flag like `needs_approval`. There's no flag reason for these kind of types.
-    flag_type = PostActionType.flag_types[rs.reviewable_score_type]
+    flag_type = post_action_type_view.flag_types[rs.reviewable_score_type]
     return unless flag_type
 
     notify_responders = options[:notify_responders]
@@ -395,6 +413,7 @@ class PostDestroyer
             "flag_reasons#{".responder" if notify_responders}.#{flag_type}",
             locale: SiteSetting.default_locale,
             base_path: Discourse.base_path,
+            default: PostActionType.flags.find { |flag| flag[:name_key] == flag_type.to_s }[:name],
           ),
       },
     )

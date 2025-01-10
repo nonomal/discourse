@@ -1,4 +1,6 @@
 .reviewable {
+  background: var(--d-content-background);
+
   .flagged-post-header {
     width: 100%;
     display: flex;
@@ -92,6 +94,12 @@
       font-weight: bold;
       margin-right: 1em;
     }
+    .value {
+      max-width: calc(
+        100% - 8em - 1em
+      ); // subtracting width of name and margin-right
+      word-wrap: break-word;
+    }
     margin-bottom: 0.5em;
   }
 }
@@ -133,11 +141,10 @@
   }
 }
 
-.reviewable-actions .claimed-actions {
+.claimed-actions {
   display: flex;
   flex: 1 1 100%;
   margin-right: 0;
-  justify-content: space-between;
   align-items: center;
   margin-bottom: 0.5em;
 }
@@ -232,8 +239,9 @@
       color: var(--secondary);
       border-radius: 8px;
       background-color: var(--secondary-high);
-      &.-flagged-post {
-        background-color: var(--danger-medium);
+      &.-flagged-post,
+      &.-flagged-chat-message {
+        background-color: var(--danger);
       }
       &.-queued-post,
       &.-queued-topic,
@@ -272,15 +280,17 @@
 
     button {
       white-space: nowrap;
+    }
 
-      &.approve-post {
-        background-color: var(--success);
-        color: var(--secondary);
-      }
-      &.reject-post {
-        background-color: var(--danger);
-        color: var(--secondary);
-      }
+    .approve-post,
+    .approve-post > summary {
+      background-color: var(--success);
+      color: var(--secondary);
+    }
+    .reject-post,
+    .reject-post > summary {
+      background-color: var(--danger);
+      color: var(--secondary);
     }
 
     .reviewable-action,
@@ -293,6 +303,13 @@
 
 .reviewable-stale {
   opacity: 0.7;
+}
+
+.reviewable-deleted {
+  .reviewable-contents .post-contents .post-body {
+    background-color: var(--danger-low-mid);
+    padding: 0.5em;
+  }
 }
 
 .blur-images {
@@ -312,7 +329,7 @@
 }
 
 .reviewable-scores {
-  margin-top: 1.5rem;
+  margin-top: 1rem;
   min-width: 50%;
   color: var(--primary-high);
 
@@ -469,24 +486,50 @@
     max-width: var(--topic-body-width);
     margin-top: 0.5em;
 
-    &__scroll {
-      max-height: 300px;
-      overflow-y: auto;
+    &.is-collapsed {
+      max-height: 50vh;
+      overflow: hidden;
+
       &:after {
         content: "";
         position: absolute;
+        left: 0;
         bottom: 0;
+        height: 25%;
         width: 100%;
-        height: 1.5em;
-        background: linear-gradient(
-          to bottom,
-          rgba(var(--secondary-rgb), 0),
-          rgba(var(--secondary-rgb), 100%)
-        );
+        background: linear-gradient(to bottom, transparent, var(--secondary));
+      }
+
+      + .post-body__toggle-btn {
+        transform: translateX(-50%) translateY(-50%);
+      }
+    }
+    p {
+      margin-bottom: 0;
+    }
+    &__toggle-btn {
+      background: var(--primary-very-low);
+      color: var(--primary-high);
+      font-size: var(--font-down-2);
+      box-shadow: var(--shadow-dropdown);
+      margin-left: 50%;
+      transform: translateX(-50%);
+      border-radius: 4px;
+
+      .d-icon {
+        color: var(--primary-high);
+      }
+
+      &:hover {
+        background: var(--primary-very-low);
+        color: var(--tertiary);
+
+        .d-icon {
+          color: var(--tertiary);
+        }
       }
     }
 
-    p,
     aside {
       margin: 0 0 1em 0;
     }
@@ -512,6 +555,13 @@
       display: block;
       font-size: var(--font-up-2);
       margin-right: 0.75em;
+    }
+    .badge-category__wrapper {
+      margin-left: 0.25em;
+    }
+    .discourse-tag {
+      vertical-align: bottom;
+      padding-left: 0.1em;
     }
   }
 
@@ -546,8 +596,4 @@
     }
     margin-bottom: 0.5em;
   }
-}
-
-.flag-modal .modal-inner-container .select-kit.reviewable-action-dropdown {
-  width: initial;
 }

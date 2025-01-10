@@ -11,14 +11,14 @@ class ImportScripts::VBulletin < ImportScripts::Base
 
   # override these using environment vars
 
-  URL_PREFIX ||= ENV["URL_PREFIX"] || "forum/"
-  DB_PREFIX ||= ENV["DB_PREFIX"] || "vb_"
-  DB_HOST ||= ENV["DB_HOST"] || "localhost"
-  DB_NAME ||= ENV["DB_NAME"] || "vbulletin"
-  DB_PASS ||= ENV["DB_PASS"] || "password"
-  DB_USER ||= ENV["DB_USER"] || "username"
-  ATTACH_DIR ||= ENV["ATTACH_DIR"] || "/home/discourse/vbulletin/attach"
-  AVATAR_DIR ||= ENV["AVATAR_DIR"] || "/home/discourse/vbulletin/avatars"
+  URL_PREFIX = ENV["URL_PREFIX"] || "forum/"
+  DB_PREFIX = ENV["DB_PREFIX"] || "vb_"
+  DB_HOST = ENV["DB_HOST"] || "localhost"
+  DB_NAME = ENV["DB_NAME"] || "vbulletin"
+  DB_PASS = ENV["DB_PASS"] || "password"
+  DB_USER = ENV["DB_USER"] || "username"
+  ATTACH_DIR = ENV["ATTACH_DIR"] || "/home/discourse/vbulletin/attach"
+  AVATAR_DIR = ENV["AVATAR_DIR"] || "/home/discourse/vbulletin/avatars"
 
   def initialize
     super
@@ -439,9 +439,7 @@ class ImportScripts::VBulletin < ImportScripts::Base
         if !post.raw[html]
           post.raw += "\n\n#{html}\n\n"
           post.save!
-          unless PostUpload.where(post: post, upload: upl_obj).exists?
-            PostUpload.create!(post: post, upload: upl_obj)
-          end
+          UploadReference.ensure_exist!(upload_ids: [upl_obj.id], target: post)
         end
       else
         puts "Fail"

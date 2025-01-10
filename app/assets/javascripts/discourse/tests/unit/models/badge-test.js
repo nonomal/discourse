@@ -1,7 +1,11 @@
+import { getOwner } from "@ember/owner";
+import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
 import Badge from "discourse/models/badge";
-import { setupTest } from "ember-qunit";
-import { getOwner } from "discourse-common/lib/get-owner";
+import pretender, {
+  parsePostData,
+  response,
+} from "discourse/tests/helpers/create-pretender";
 
 module("Unit | Model | badge", function (hooks) {
   setupTest(hooks);
@@ -11,8 +15,8 @@ module("Unit | Model | badge", function (hooks) {
     const badge1 = store.createRecord("badge", { name: "New Badge" });
     const badge2 = store.createRecord("badge", { id: 1, name: "Old Badge" });
 
-    assert.ok(badge1.newBadge, "badges without ids are new");
-    assert.ok(!badge2.newBadge, "badges with ids are not new");
+    assert.true(badge1.newBadge, "badges without ids are new");
+    assert.false(badge2.newBadge, "badges with ids are not new");
   });
 
   test("createFromJson array", function (assert) {
@@ -25,7 +29,7 @@ module("Unit | Model | badge", function (hooks) {
 
     const badges = Badge.createFromJson(badgesJson);
 
-    assert.ok(Array.isArray(badges), "returns an array");
+    assert.true(Array.isArray(badges), "returns an array");
     assert.strictEqual(badges[0].name, "Badge 1", "badge details are set");
     assert.strictEqual(
       badges[0].badge_type.name,
@@ -42,7 +46,7 @@ module("Unit | Model | badge", function (hooks) {
 
     const badge = Badge.createFromJson(badgeJson);
 
-    assert.ok(!Array.isArray(badge), "does not returns an array");
+    assert.false(Array.isArray(badge), "does not returns an array");
   });
 
   test("updateFromJson", function (assert) {
@@ -61,27 +65,48 @@ module("Unit | Model | badge", function (hooks) {
     );
   });
 
-  test("save", function (assert) {
-    assert.expect(0);
+  test("save", async function (assert) {
     const store = getOwner(this).lookup("service:store");
     const badge = store.createRecord("badge", {
+      id: 1999,
       name: "New Badge",
       description: "This is a new badge.",
       badge_type_id: 1,
     });
-    badge.save(["name", "description", "badge_type_id"]);
+
+    pretender.put("/admin/badges/1999", (request) => {
+      const params = parsePostData(request.requestBody);
+      assert.deepEqual(params, { description: "A special badge!" });
+      assert.step("called API");
+      return response({});
+    });
+
+    await badge.save({
+      description: "A special badge!",
+    });
+
+    assert.verifySteps(["called API"]);
   });
 
-  test("destroy", function (assert) {
-    assert.expect(0);
+  test("destroy", async function (assert) {
     const store = getOwner(this).lookup("service:store");
     const badge = store.createRecord("badge", {
       name: "New Badge",
       description: "This is a new badge.",
       badge_type_id: 1,
     });
-    badge.destroy();
+
+    pretender.delete("/admin/badges/3", () => {
+      assert.step("called API");
+      return response({});
+    });
+
+    // Doesn't call the API if destroying a new badge
+    await badge.destroy();
+
     badge.set("id", 3);
-    badge.destroy();
+    await badge.destroy();
+
+    assert.verifySteps(["called API"]);
   });
 });

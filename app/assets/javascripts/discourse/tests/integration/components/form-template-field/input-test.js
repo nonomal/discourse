@@ -1,8 +1,8 @@
-import { module, test } from "qunit";
-import { setupRenderingTest } from "discourse/tests/helpers/component-test";
 import { render } from "@ember/test-helpers";
 import { hbs } from "ember-cli-htmlbars";
-import { exists, query } from "discourse/tests/helpers/qunit-helpers";
+import { module, test } from "qunit";
+import { setupRenderingTest } from "discourse/tests/helpers/component-test";
+import { query } from "discourse/tests/helpers/qunit-helpers";
 
 module(
   "Integration | Component | form-template-field | input",
@@ -12,12 +12,9 @@ module(
     test("renders a text input", async function (assert) {
       await render(hbs`<FormTemplateField::Input />`);
 
-      assert.ok(
-        exists(
-          ".form-template-field[data-field-type='input'] input[type='text']"
-        ),
-        "A text input component exists"
-      );
+      assert
+        .dom(".form-template-field[data-field-type='input'] input[type='text']")
+        .exists("a text input component exists");
     });
 
     test("renders a text input with attributes", async function (assert) {
@@ -31,12 +28,9 @@ module(
         hbs`<FormTemplateField::Input @attributes={{this.attributes}} />`
       );
 
-      assert.ok(
-        exists(
-          ".form-template-field[data-field-type='input'] input[type='text']"
-        ),
-        "A text input component exists"
-      );
+      assert
+        .dom(".form-template-field[data-field-type='input'] input[type='text']")
+        .exists("a text input component exists");
 
       assert.dom(".form-template-field__label").hasText("My text label");
       assert.strictEqual(
@@ -56,6 +50,19 @@ module(
       );
 
       assert.dom(".form-template-field__label").doesNotExist();
+    });
+
+    test("renders a description if present", async function (assert) {
+      const attributes = {
+        description: "Your full name",
+      };
+      this.set("attributes", attributes);
+
+      await render(
+        hbs`<FormTemplateField::Input @attributes={{this.attributes}} />`
+      );
+
+      assert.dom(".form-template-field__description").hasText("Your full name");
     });
   }
 );
