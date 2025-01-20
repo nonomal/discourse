@@ -1,9 +1,9 @@
 # frozen_string_literal: true
 
 RSpec.describe Admin::StaffActionLogsController do
-  fab!(:admin) { Fabricate(:admin) }
-  fab!(:moderator) { Fabricate(:moderator) }
-  fab!(:user) { Fabricate(:user) }
+  fab!(:admin)
+  fab!(:moderator)
+  fab!(:user)
 
   describe "#index" do
     shared_examples "staff action logs accessible" do
@@ -26,6 +26,12 @@ RSpec.describe Admin::StaffActionLogsController do
           "id" => "delete_topic",
           "action_id" => UserHistory.actions[:delete_topic],
         )
+      end
+
+      describe "when limit params is invalid" do
+        include_examples "invalid limit params",
+                         "/admin/logs/staff_action_logs.json",
+                         described_class::INDEX_LIMIT
       end
     end
 
@@ -105,7 +111,8 @@ RSpec.describe Admin::StaffActionLogsController do
         theme.set_field(target: :mobile, name: :scss, value: "body {.up}")
         theme.set_field(target: :common, name: :scss, value: "omit-dupe")
 
-        original_json = ThemeSerializer.new(theme, root: false).to_json
+        original_json =
+          ThemeSerializer.new(theme, root: false, include_theme_field_values: true).to_json
 
         theme.set_field(target: :mobile, name: :scss, value: "body {.down}")
 
@@ -122,10 +129,45 @@ RSpec.describe Admin::StaffActionLogsController do
       end
     end
 
+    shared_examples "tag_group diffs accessible" do
+      it "generates diffs for tag_group changes" do
+        tag1 = Fabricate(:tag)
+        tag2 = Fabricate(:tag)
+        tag3 = Fabricate(:tag)
+        tag_group1 = Fabricate(:tag_group, tags: [tag1, tag2])
+
+        old_json = TagGroupSerializer.new(tag_group1, root: false).to_json
+
+        tag_group2 = Fabricate(:tag_group, tags: [tag2, tag3])
+
+        new_json = TagGroupSerializer.new(tag_group2, root: false).to_json
+
+        record =
+          StaffActionLogger.new(Discourse.system_user).log_tag_group_change(
+            tag_group2.name,
+            old_json,
+            new_json,
+          )
+
+        get "/admin/logs/staff_action_logs/#{record.id}/diff.json"
+        expect(response.status).to eq(200)
+
+        parsed = response.parsed_body
+
+        name_diff = <<-HTML
+          <h3>name</h3><p></p><table class="markdown"><tr><td class="diff-del"><del>#{tag_group1.name}</del></td><td class="diff-ins"><ins>#{tag_group2.name}</ins></td></tr></table>
+        HTML
+        expect(parsed["side_by_side"]).to include(name_diff.strip)
+        expect(parsed["side_by_side"]).to include("<del>#{tag1.name}</del>")
+        expect(parsed["side_by_side"]).to include("<ins>#{tag3.name}</ins>")
+      end
+    end
+
     context "when logged in as an admin" do
       before { sign_in(admin) }
 
       include_examples "theme diffs accessible"
+      include_examples "tag_group diffs accessible"
 
       it "is not erroring when current value is empty" do
         theme = Fabricate(:theme)
@@ -139,6 +181,7 @@ RSpec.describe Admin::StaffActionLogsController do
       before { sign_in(moderator) }
 
       include_examples "theme diffs accessible"
+      include_examples "tag_group diffs accessible"
     end
 
     context "when logged in as a non-staff user" do

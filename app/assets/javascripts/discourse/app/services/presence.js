@@ -1,19 +1,20 @@
-import Service from "@ember/service";
 import EmberObject, { computed } from "@ember/object";
-import { ajax } from "discourse/lib/ajax";
+import { dependentKeyCompat } from "@ember/object/compat";
+import Evented from "@ember/object/evented";
 import { cancel, debounce, next, once, throttle } from "@ember/runloop";
-import discourseLater from "discourse-common/lib/later";
-import Session from "discourse/models/session";
+import Service, { service } from "@ember/service";
 import { Promise } from "rsvp";
-import User from "discourse/models/user";
+import { ajax } from "discourse/lib/ajax";
+import { bind } from "discourse/lib/decorators";
+import { isTesting } from "discourse/lib/environment";
+import getURL from "discourse/lib/get-url";
+import { disableImplicitInjections } from "discourse/lib/implicit-injections";
+import discourseLater from "discourse/lib/later";
 import userPresent, {
   onPresenceChange,
   removeOnPresenceChange,
 } from "discourse/lib/user-presence";
-import { bind } from "discourse-common/utils/decorators";
-import Evented from "@ember/object/evented";
-import { isTesting } from "discourse-common/config/environment";
-import getURL from "discourse-common/lib/get-url";
+import User from "discourse/models/user";
 
 const PRESENCE_INTERVAL_S = 30;
 const DEFAULT_PRESENCE_DEBOUNCE_MS = isTesting() ? 0 : 500;
@@ -108,12 +109,11 @@ class PresenceChannel extends EmberObject.extend(Evented) {
     this.trigger("change", this);
   }
 
-  @computed("_presenceState.users", "subscribed")
+  @dependentKeyCompat
   get users() {
-    if (!this.subscribed) {
-      return;
+    if (this.get("subscribed")) {
+      return this.get("_presenceState.users");
     }
-    return this._presenceState?.users;
   }
 
   @computed("_presenceState.count", "subscribed")
@@ -250,7 +250,13 @@ class PresenceChannelState extends EmberObject.extend(Evented) {
   }
 }
 
+@disableImplicitInjections
 export default class PresenceService extends Service {
+  @service currentUser;
+  @service messageBus;
+  @service session;
+  @service siteSettings;
+
   _presenceDebounceMs = DEFAULT_PRESENCE_DEBOUNCE_MS;
 
   init() {
@@ -260,6 +266,7 @@ export default class PresenceService extends Service {
     this._presentProxies = new Map();
     this._subscribedProxies = new Map();
     this._initialDataRequests = new Map();
+    this._previousPresentButInactiveChannels = new Set();
 
     if (this.currentUser) {
       window.addEventListener("beforeunload", this._beaconLeaveAll);
@@ -270,15 +277,15 @@ export default class PresenceService extends Service {
     }
   }
 
-  get _presentChannels() {
-    return new Set(this._presentProxies.keys());
-  }
-
   willDestroy() {
     super.willDestroy(...arguments);
     window.removeEventListener("beforeunload", this._beaconLeaveAll);
     removeOnPresenceChange(this._throttledUpdateServer);
     cancel(this._debounceTimer);
+  }
+
+  get _presentChannels() {
+    return new Set(this._presentProxies.keys());
   }
 
   // Get a PresenceChannel object representing a single channel
@@ -479,7 +486,7 @@ export default class PresenceService extends Service {
     data.append("client_id", this.messageBus.clientId);
     channelsToLeave.forEach((ch) => data.append("leave_channels[]", ch));
 
-    data.append("authenticity_token", Session.currentProp("csrfToken"));
+    data.append("authenticity_token", this.session.csrfToken);
     navigator.sendBeacon(getURL("/presence/update"), data);
   }
 
@@ -495,6 +502,10 @@ export default class PresenceService extends Service {
   }
 
   async _updateServer() {
+    if (this.isDestroying || this.isDestroyed) {
+      return;
+    }
+
     this._lastUpdate = new Date();
     this._updateRunning = true;
 
@@ -506,6 +517,7 @@ export default class PresenceService extends Service {
 
     try {
       const presentChannels = [];
+      const presentButInactiveChannels = new Set();
       const channelsToLeave = queue
         .filter((e) => e.type === "leave")
         .map((e) => e.channel);
@@ -518,11 +530,19 @@ export default class PresenceService extends Service {
         ) {
           presentChannels.push(channelName);
         } else {
-          channelsToLeave.push(channelName);
+          presentButInactiveChannels.add(channelName);
+          if (!this._previousPresentButInactiveChannels.has(channelName)) {
+            channelsToLeave.push(channelName);
+          }
         }
       }
+      this._previousPresentButInactiveChannels = presentButInactiveChannels;
 
-      if (queue.length === 0 && presentChannels.length === 0) {
+      if (
+        queue.length === 0 &&
+        presentChannels.length === 0 &&
+        channelsToLeave.length === 0
+      ) {
         return;
       }
 
@@ -556,6 +576,11 @@ export default class PresenceService extends Service {
         const waitSeconds = e.jqXHR.responseJSON?.extras?.wait_seconds || 10;
         this._presenceDebounceMs = waitSeconds * 1000;
       } else {
+        // Other error, exponential backoff capped at 30 seconds
+        this._presenceDebounceMs = Math.min(
+          this._presenceDebounceMs * 2,
+          PRESENCE_INTERVAL_S * 1000
+        );
         throw e;
       }
     } finally {
@@ -570,6 +595,10 @@ export default class PresenceService extends Service {
   // drop back to the last event via the regular throttle function.
   @bind
   _throttledUpdateServer() {
+    if (this.isDestroying || this.isDestroyed) {
+      return;
+    }
+
     if (
       !this._lastUpdate ||
       new Date() - this._lastUpdate > PRESENCE_THROTTLE_MS
@@ -600,7 +629,7 @@ export default class PresenceService extends Service {
       );
     } else if (
       !this._nextUpdateTimer &&
-      this._presentChannels.length > 0 &&
+      this._presentChannels.size > 0 &&
       !isTesting()
     ) {
       this._nextUpdateTimer = discourseLater(

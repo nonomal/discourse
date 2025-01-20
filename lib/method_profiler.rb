@@ -90,7 +90,10 @@ class MethodProfiler
 
   def self.start(transfer = nil)
     Thread.current[:_method_profiler] = transfer ||
-      { __start: Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+      {
+        __start: Process.clock_gettime(Process::CLOCK_MONOTONIC),
+        __start_gc_heap_live_slots: GC.stat[:heap_live_slots],
+      }
   end
 
   def self.clear
@@ -99,11 +102,13 @@ class MethodProfiler
 
   def self.stop
     finish = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
     if data = Thread.current[:_method_profiler]
       Thread.current[:_method_profiler] = nil
       start = data.delete(:__start)
       data[:total_duration] = finish - start
     end
+
     data
   end
 

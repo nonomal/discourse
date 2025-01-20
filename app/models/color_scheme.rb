@@ -1,18 +1,16 @@
 # frozen_string_literal: true
 
 class ColorScheme < ActiveRecord::Base
-  # rubocop:disable Layout/HashAlignment
-
-  CUSTOM_SCHEMES = {
+  BUILT_IN_SCHEMES = {
     Dark: {
       "primary" => "dddddd",
       "secondary" => "222222",
-      "tertiary" => "0f82af",
+      "tertiary" => "099dd7",
       "quaternary" => "c14924",
       "header_background" => "111111",
       "header_primary" => "dddddd",
       "highlight" => "a87137",
-      "selected" => "2c2c2c",
+      "selected" => "052e3d",
       "hover" => "313131",
       "danger" => "e45735",
       "success" => "1ca551",
@@ -113,7 +111,7 @@ class ColorScheme < ActiveRecord::Base
       "primary-medium" => "696969",
       "primary-low-mid" => "909090",
       "secondary" => "ffffff",
-      "tertiary" => "3369FF",
+      "tertiary" => "0033CC",
       "quaternary" => "3369FF",
       "header_background" => "ffffff",
       "header_primary" => "000000",
@@ -139,8 +137,8 @@ class ColorScheme < ActiveRecord::Base
       "highlight" => "3369FF",
       "selected" => "0d2569",
       "hover" => "002382",
-      "danger" => "BB1122",
-      "success" => "3d854d",
+      "danger" => "FF697A",
+      "success" => "70B880",
       "love" => "9D256B",
     },
     # By @zenorocha
@@ -256,7 +254,7 @@ class ColorScheme < ActiveRecord::Base
       "secondary" => "002B36",
       "tertiary_low" => "003E54",
       "tertiary_medium" => "00557A",
-      "tertiary" => "0088cc",
+      "tertiary" => "1a97d5",
       "tertiary_high" => "006C9F",
       "quaternary_low" => "944835",
       "quaternary" => "e45735",
@@ -279,8 +277,6 @@ class ColorScheme < ActiveRecord::Base
     },
   }
 
-  # rubocop:enable Layout/HashAlignment
-
   LIGHT_THEME_ID = "Light"
 
   def self.base_color_scheme_colors
@@ -290,7 +286,7 @@ class ColorScheme < ActiveRecord::Base
 
     list = [{ id: LIGHT_THEME_ID, colors: base_with_hash }]
 
-    CUSTOM_SCHEMES.each do |k, v|
+    BUILT_IN_SCHEMES.each do |k, v|
       colors = []
       v.each { |name, color| colors << { name: name, hex: "#{color}" } }
       list.push(id: k.to_s, colors: colors)
@@ -389,7 +385,7 @@ class ColorScheme < ActiveRecord::Base
     new_color_scheme.user_selectable = true
 
     colors =
-      CUSTOM_SCHEMES[params[:base_scheme_id].to_sym]&.map do |name, hex|
+      BUILT_IN_SCHEMES[params[:base_scheme_id].to_sym]&.map do |name, hex|
         { name: name, hex: hex }
       end if params[:base_scheme_id]
     colors ||= base.colors_hashes
@@ -443,7 +439,7 @@ class ColorScheme < ActiveRecord::Base
 
   def base_colors
     colors = nil
-    colors = CUSTOM_SCHEMES[base_scheme_id.to_sym] if base_scheme_id && base_scheme_id != "Light"
+    colors = BUILT_IN_SCHEMES[base_scheme_id.to_sym] if base_scheme_id && base_scheme_id != "Light"
     colors || ColorScheme.base_colors
   end
 

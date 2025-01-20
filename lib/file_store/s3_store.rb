@@ -8,7 +8,7 @@ require "file_helper"
 
 module FileStore
   class S3Store < BaseStore
-    TOMBSTONE_PREFIX ||= "tombstone/"
+    TOMBSTONE_PREFIX = "tombstone/"
 
     delegate :abort_multipart,
              :presign_multipart_part,
@@ -25,6 +25,7 @@ module FileStore
         S3Helper.new(
           s3_bucket,
           Rails.configuration.multisite ? multisite_tombstone_prefix : TOMBSTONE_PREFIX,
+          use_accelerate_endpoint: SiteSetting.Upload.enable_s3_transfer_acceleration,
         )
     end
 
@@ -87,23 +88,19 @@ module FileStore
       # cache file locally when needed
       cache_file(file, File.basename(path)) if opts[:cache_locally]
       options = {
-        acl: opts[:private_acl] ? "private" : "public-read",
+        acl: SiteSetting.s3_use_acls ? (opts[:private_acl] ? "private" : "public-read") : nil,
         cache_control: "max-age=31556952, public, immutable",
         content_type:
           opts[:content_type].presence || MiniMime.lookup_by_filename(filename)&.content_type,
       }
 
-      # add a "content disposition: attachment" header with the original
-      # filename for everything but safe images (not SVG). audio and video will
-      # still stream correctly in HTML players, and when a direct link is
-      # provided to any file but an image it will download correctly in the
-      # browser.
-      if !FileHelper.is_inline_image?(filename)
-        options[:content_disposition] = ActionDispatch::Http::ContentDisposition.format(
-          disposition: "attachment",
-          filename: filename,
-        )
-      end
+      # Only add a "content disposition: attachment" header for svgs
+      # see https://github.com/discourse/discourse/commit/31e31ef44973dc4daaee2f010d71588ea5873b53.
+      # Adding this header for all files would break the ability to view attachments in the browser
+      options[:content_disposition] = ActionDispatch::Http::ContentDisposition.format(
+        disposition: FileHelper.is_svg?(filename) ? "attachment" : "inline",
+        filename: filename,
+      )
 
       path.prepend(File.join(upload_path, "/")) if Rails.configuration.multisite
 
@@ -162,7 +159,6 @@ module FileStore
         else
           return true
         end
-        return false
       end
 
       return false if SiteSetting.Upload.s3_cdn_url.blank?
@@ -226,6 +222,8 @@ module FileStore
           force_download: force_download,
           filename: upload.original_filename,
         )
+      elsif SiteSetting.s3_use_cdn_url_for_all_uploads
+        cdn_url(upload.url)
       else
         upload.url
       end
@@ -250,19 +248,19 @@ module FileStore
       presigned_get_url(key, expires_in: expires_in, force_download: force_download)
     end
 
-    def signed_url_for_temporary_upload(
+    def signed_request_for_temporary_upload(
       file_name,
       expires_in: S3Helper::UPLOAD_URL_EXPIRES_AFTER_SECONDS,
       metadata: {}
     )
       key = temporary_upload_path(file_name)
-      s3_helper.presigned_url(
+      s3_helper.presigned_request(
         key,
         method: :put_object,
         expires_in: expires_in,
         opts: {
           metadata: metadata,
-          acl: "private",
+          acl: SiteSetting.s3_use_acls ? "private" : nil,
         },
       )
     end
@@ -295,10 +293,18 @@ module FileStore
     end
 
     def list_missing_uploads(skip_optimized: false)
-      if SiteSetting.enable_s3_inventory
-        require "s3_inventory"
-        S3Inventory.new(s3_helper, :upload).backfill_etags_and_list_missing
-        S3Inventory.new(s3_helper, :optimized).backfill_etags_and_list_missing unless skip_optimized
+      if s3_inventory_bucket = SiteSetting.s3_inventory_bucket
+        s3_options = {}
+
+        if (s3_inventory_bucket_region = SiteSetting.s3_inventory_bucket_region).present?
+          s3_options[:region] = s3_inventory_bucket_region
+        end
+
+        S3Inventory.new(:upload, s3_inventory_bucket:, s3_options:).backfill_etags_and_list_missing
+
+        unless skip_optimized
+          S3Inventory.new(:optimized, s3_inventory_bucket:).backfill_etags_and_list_missing
+        end
       else
         list_missing(Upload.by_users, "original/")
         list_missing(OptimizedImage, "optimized/") unless skip_optimized
@@ -397,7 +403,9 @@ module FileStore
 
     def update_ACL(key, secure)
       begin
-        object_from_path(key).acl.put(acl: secure ? "private" : "public-read")
+        object_from_path(key).acl.put(
+          acl: SiteSetting.s3_use_acls ? (secure ? "private" : "public-read") : nil,
+        )
       rescue Aws::S3::Errors::NoSuchKey
         Rails.logger.warn("Could not update ACL on upload with key: '#{key}'. Upload is missing.")
       end

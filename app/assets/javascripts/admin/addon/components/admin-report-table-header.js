@@ -1,11 +1,11 @@
+import Component from "@ember/component";
 import {
   attributeBindings,
   classNameBindings,
   classNames,
   tagName,
 } from "@ember-decorators/component";
-import Component from "@ember/component";
-import discourseComputed from "discourse-common/utils/decorators";
+import discourseComputed from "discourse/lib/decorators";
 
 @tagName("th")
 @classNames("admin-report-table-header")

@@ -1,21 +1,28 @@
-import { inject as service } from "@ember/service";
-import Backup from "admin/models/backup";
-import BackupStatus from "admin/models/backup-status";
-import DiscourseRoute from "discourse/routes/discourse";
 import EmberObject, { action } from "@ember/object";
-import I18n from "I18n";
-import PreloadStore from "discourse/lib/preload-store";
-import User from "discourse/models/user";
+import { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
 import { extractError } from "discourse/lib/ajax-error";
-import getURL from "discourse-common/lib/get-url";
-import showModal from "discourse/lib/show-modal";
-import { bind } from "discourse-common/utils/decorators";
+import { bind } from "discourse/lib/decorators";
+import getURL from "discourse/lib/get-url";
+import PreloadStore from "discourse/lib/preload-store";
+import DiscourseRoute from "discourse/routes/discourse";
+import { i18n } from "discourse-i18n";
+import StartBackupModal from "admin/components/modal/start-backup";
+import Backup from "admin/models/backup";
+import BackupStatus from "admin/models/backup-status";
 
 const LOG_CHANNEL = "/admin/backups/logs";
 
 export default class AdminBackupsRoute extends DiscourseRoute {
+  @service currentUser;
   @service dialog;
+  @service router;
+  @service messageBus;
+  @service modal;
+
+  titleToken() {
+    return i18n("admin.backups.title");
+  }
 
   activate() {
     this.messageBus.subscribe(LOG_CHANNEL, this.onMessage);
@@ -25,33 +32,33 @@ export default class AdminBackupsRoute extends DiscourseRoute {
     this.messageBus.unsubscribe(LOG_CHANNEL, this.onMessage);
   }
 
-  model() {
-    return PreloadStore.getAndRemove("operations_status", () =>
+  async model() {
+    const status = await PreloadStore.getAndRemove("operations_status", () =>
       ajax("/admin/backups/status.json")
-    ).then((status) =>
-      BackupStatus.create({
-        isOperationRunning: status.is_operation_running,
-        canRollback: status.can_rollback,
-        allowRestore: status.allow_restore,
-      })
     );
+
+    return BackupStatus.create({
+      isOperationRunning: status.is_operation_running,
+      canRollback: status.can_rollback,
+      allowRestore: status.allow_restore,
+    });
   }
 
   @bind
   onMessage(log) {
     if (log.message === "[STARTED]") {
-      User.currentProp("hideReadOnlyAlert", true);
+      this.currentUser.set("hideReadOnlyAlert", true);
       this.controllerFor("adminBackups").set("model.isOperationRunning", true);
       this.controllerFor("adminBackupsLogs").get("logs").clear();
     } else if (log.message === "[FAILED]") {
       this.controllerFor("adminBackups").set("model.isOperationRunning", false);
       this.dialog.alert(
-        I18n.t("admin.backups.operations.failed", {
+        i18n("admin.backups.operations.failed", {
           operation: log.operation,
         })
       );
     } else if (log.message === "[SUCCESS]") {
-      User.currentProp("hideReadOnlyAlert", false);
+      this.currentUser.set("hideReadOnlyAlert", false);
       this.controllerFor("adminBackups").set("model.isOperationRunning", false);
       if (log.operation === "restore") {
         // redirect to homepage when the restore is done (session might be lost)
@@ -66,12 +73,14 @@ export default class AdminBackupsRoute extends DiscourseRoute {
 
   @action
   showStartBackupModal() {
-    showModal("admin-start-backup", { admin: true });
+    this.modal.show(StartBackupModal, {
+      model: { startBackup: this.startBackup },
+    });
   }
 
   @action
   startBackup(withUploads) {
-    this.transitionTo("admin.backups.logs");
+    this.router.transitionTo("admin.backups.logs");
     Backup.start(withUploads).then((result) => {
       if (!result.success) {
         this.dialog.alert(result.message);
@@ -82,7 +91,7 @@ export default class AdminBackupsRoute extends DiscourseRoute {
   @action
   destroyBackup(backup) {
     return this.dialog.yesNoConfirm({
-      message: I18n.t("admin.backups.operations.destroy.confirm"),
+      message: i18n("admin.backups.operations.destroy.confirm"),
       didConfirm: () => {
         backup
           .destroy()
@@ -98,9 +107,9 @@ export default class AdminBackupsRoute extends DiscourseRoute {
   @action
   startRestore(backup) {
     this.dialog.yesNoConfirm({
-      message: I18n.t("admin.backups.operations.restore.confirm"),
+      message: i18n("admin.backups.operations.restore.confirm"),
       didConfirm: () => {
-        this.transitionTo("admin.backups.logs");
+        this.router.transitionTo("admin.backups.logs");
         backup.restore();
       },
     });
@@ -109,7 +118,7 @@ export default class AdminBackupsRoute extends DiscourseRoute {
   @action
   cancelOperation() {
     this.dialog.yesNoConfirm({
-      message: I18n.t("admin.backups.operations.cancel.confirm"),
+      message: i18n("admin.backups.operations.cancel.confirm"),
       didConfirm: () => {
         Backup.cancel().then(() => {
           this.controllerFor("adminBackups").set(
@@ -124,7 +133,7 @@ export default class AdminBackupsRoute extends DiscourseRoute {
   @action
   rollback() {
     return this.dialog.yesNoConfirm({
-      message: I18n.t("admin.backups.operations.rollback.confirm"),
+      message: i18n("admin.backups.operations.rollback.confirm"),
       didConfirm: () => {
         Backup.rollback().then((result) => {
           if (!result.success) {
@@ -140,13 +149,13 @@ export default class AdminBackupsRoute extends DiscourseRoute {
 
   @action
   uploadSuccess(filename) {
-    this.dialog.alert(I18n.t("admin.backups.upload.success", { filename }));
+    this.dialog.alert(i18n("admin.backups.upload.success", { filename }));
   }
 
   @action
   uploadError(filename, message) {
     this.dialog.alert(
-      I18n.t("admin.backups.upload.error", { filename, message })
+      i18n("admin.backups.upload.error", { filename, message })
     );
   }
 
@@ -162,7 +171,7 @@ export default class AdminBackupsRoute extends DiscourseRoute {
       })
       .catch((error) => {
         this.dialog.alert(
-          I18n.t("admin.backups.backup_storage_error", {
+          i18n("admin.backups.backup_storage_error", {
             error_message: extractError(error),
           })
         );

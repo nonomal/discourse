@@ -61,7 +61,7 @@ class PostRevisor
     tracked_topic_fields[field] = block
 
     # Define it in the serializer unless it already has been defined
-    unless PostRevisionSerializer.instance_methods(false).include?("#{field}_changes".to_sym)
+    if PostRevisionSerializer.instance_methods(false).exclude?("#{field}_changes".to_sym)
       PostRevisionSerializer.add_compared_field(field)
     end
   end
@@ -90,12 +90,7 @@ class PostRevisor
     elsif new_category.nil? || tc.guardian.can_move_topic_to_category?(new_category_id)
       tags = fields[:tags] || tc.topic.tags.map(&:name)
       if new_category &&
-           !DiscourseTagging.validate_min_required_tags_for_category(
-             tc.guardian,
-             tc.topic,
-             new_category,
-             tags,
-           )
+           !DiscourseTagging.validate_category_tags(tc.guardian, tc.topic, new_category, tags)
         tc.check_result(false)
         next
       end
@@ -159,31 +154,33 @@ class PostRevisor
   end
 
   def self.create_small_action_for_category_change(topic:, user:, old_category:, new_category:)
-    return if !SiteSetting.create_post_for_category_and_tag_changes
+    if !old_category || !new_category || !SiteSetting.create_post_for_category_and_tag_changes ||
+         SiteSetting.whispers_allowed_groups.blank?
+      return
+    end
 
     topic.add_moderator_post(
       user,
       I18n.t(
         "topic_category_changed",
-        from: category_name_raw(old_category),
-        to: category_name_raw(new_category),
+        from: "##{old_category.slug_ref}",
+        to: "##{new_category.slug_ref}",
       ),
-      post_type: Post.types[:small_action],
+      post_type: Post.types[:whisper],
       action_code: "category_changed",
     )
   end
 
-  def self.category_name_raw(category)
-    "##{CategoryHashtagDataSource.category_to_hashtag_item(category).ref}"
-  end
-
   def self.create_small_action_for_tag_changes(topic:, user:, added_tags:, removed_tags:)
-    return if !SiteSetting.create_post_for_category_and_tag_changes
+    if !SiteSetting.create_post_for_category_and_tag_changes ||
+         SiteSetting.whispers_allowed_groups.blank?
+      return
+    end
 
     topic.add_moderator_post(
       user,
       tags_changed_raw(added: added_tags, removed: removed_tags),
-      post_type: Post.types[:small_action],
+      post_type: Post.types[:whisper],
       action_code: "tags_changed",
       custom_fields: {
         tags_added: added_tags,
@@ -294,6 +291,9 @@ class PostRevisor
       advance_draft_sequence if !opts[:keep_existing_draft]
     end
 
+    # bail out if the post or topic failed to save
+    return false if !successfully_saved_post_and_topic
+
     # Lock the post by default if the appropriate setting is true
     if (
          SiteSetting.staff_edit_locks_post? && !@post.wiki? && @fields.has_key?("raw") &&
@@ -319,19 +319,14 @@ class PostRevisor
     # it can fire events in sidekiq before the post is done saving
     # leading to corrupt state
     QuotedPost.extract_from(@post)
+    TopicLink.extract_from(@post)
 
-    # This must be done before post_process_post, because that uses
-    # post upload security status to cook URLs.
-    @post.update_uploads_secure_status(source: "post revisor")
+    Topic.reset_highest(@topic.id)
 
     post_process_post
-
-    update_topic_word_counts
     alert_users
     publish_changes
     grant_badge
-
-    TopicLink.extract_from(@post)
 
     ReviewablePost.queue_for_review_if_possible(@post, @editor) if should_create_new_version?
 
@@ -371,12 +366,16 @@ class PostRevisor
 
   def should_create_new_version?
     return false if @skip_revision
-    edited_by_another_user? || !grace_period_edit? || owner_changed? || force_new_version? ||
-      edit_reason_specified?
+    edited_by_another_user? || flagged? || !grace_period_edit? || owner_changed? ||
+      force_new_version? || edit_reason_specified?
   end
 
   def edit_reason_specified?
     @fields[:edit_reason].present? && @fields[:edit_reason] != @post.edit_reason
+  end
+
+  def flagged?
+    @post.is_flagged?
   end
 
   def edited_by_another_user?
@@ -422,7 +421,6 @@ class PostRevisor
 
   def grace_period_edit?
     return false if (@revised_at - @last_version_at) > SiteSetting.editing_grace_period.to_i
-    return false if @post.reviewable_flag.present?
 
     if new_raw = @fields[:raw]
       max_diff = SiteSetting.editing_grace_period_max_diff.to_i
@@ -465,7 +463,7 @@ class PostRevisor
     remove_flags_and_unhide_post
   end
 
-  USER_ACTIONS_TO_REMOVE ||= [UserAction::REPLY, UserAction::RESPONSE]
+  USER_ACTIONS_TO_REMOVE = [UserAction::REPLY, UserAction::RESPONSE]
 
   def update_post
     if @fields.has_key?("user_id") && @fields["user_id"] != @post.user_id && @post.user_id != nil
@@ -548,7 +546,7 @@ class PostRevisor
     flaggers = []
     @post
       .post_actions
-      .where(post_action_type_id: PostActionType.flag_types_without_custom.values)
+      .where(post_action_type_id: PostActionType.flag_types_without_additional_message.values)
       .each do |action|
         flaggers << action.user if action.user
         action.remove_act!(Discourse.system_user)
@@ -691,7 +689,6 @@ class PostRevisor
 
     update_topic_excerpt
     update_category_description
-    hide_welcome_topic_banner
   end
 
   def update_topic_excerpt
@@ -713,15 +710,6 @@ class PostRevisor
     end
   end
 
-  def hide_welcome_topic_banner
-    return unless guardian.is_admin?
-    return unless @topic.id == SiteSetting.welcome_topic_id
-    return unless Discourse.cache.read(Site.welcome_topic_banner_cache_key(@editor.id))
-
-    Discourse.cache.write(Site.welcome_topic_banner_cache_key(@editor.id), false)
-    MessageBus.publish("/site/welcome-topic-banner", false)
-  end
-
   def advance_draft_sequence
     @post.advance_draft_sequence
   end
@@ -730,19 +718,6 @@ class PostRevisor
     @post.invalidate_oneboxes = true
     @post.trigger_post_process
     DiscourseEvent.trigger(:post_edited, @post, self.topic_changed?, self)
-  end
-
-  def update_topic_word_counts
-    DB.exec(
-      "UPDATE topics
-                    SET word_count = (
-                      SELECT SUM(COALESCE(posts.word_count, 0))
-                      FROM posts
-                      WHERE posts.topic_id = :topic_id
-                    )
-                    WHERE topics.id = :topic_id",
-      topic_id: @topic.id,
-    )
   end
 
   def alert_users
@@ -773,5 +748,18 @@ class PostRevisor
 
   def guardian
     @guardian ||= Guardian.new(@editor)
+  end
+
+  def raw_changed?
+    @fields.has_key?(:raw) && @fields[:raw] != cached_original_raw && @post_successfully_saved
+  end
+
+  def topic_title_changed?
+    topic_changed? && @fields.has_key?(:title) && topic_diff.has_key?(:title) &&
+      !@topic_changes.errored?
+  end
+
+  def reviewable_content_changed?
+    raw_changed? || topic_title_changed?
   end
 end

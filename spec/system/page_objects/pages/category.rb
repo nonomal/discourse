@@ -20,6 +20,21 @@ module PageObjects
         self
       end
 
+      def visit_categories
+        page.visit("/categories")
+        self
+      end
+
+      def visit_new_category
+        page.visit("/new-category")
+        self
+      end
+
+      def visit_security(category)
+        page.visit("/c/#{category.slug}/edit/security")
+        self
+      end
+
       def back_to_category
         find(".edit-category-title-bar span", text: "Back to category").click
         self
@@ -31,7 +46,7 @@ module PageObjects
       end
 
       def toggle_setting(setting, text = "")
-        find(".edit-category-tab .#{setting} label.checkbox-label", text: text).click
+        find(".edit-category-tab .#{setting} label.checkbox-label", text: text, visible: :all).click
         self
       end
 
@@ -40,12 +55,18 @@ module PageObjects
         find(".d-toggle-switch .toggle-template-type", visible: false)["aria-checked"] == "true"
       end
 
+      D_EDITOR_SELECTOR = ".d-editor"
+
       def has_d_editor?
-        page.has_selector?(".d-editor")
+        page.has_selector?(D_EDITOR_SELECTOR)
+      end
+
+      def has_no_d_editor?
+        page.has_no_selector?(D_EDITOR_SELECTOR)
       end
 
       def has_selected_template?(template_name)
-        find(".select-category-template .select-kit-header")["data-name"] == template_name
+        has_css?(".select-category-template .select-kit-header[data-name='#{template_name}']")
       end
 
       def toggle_form_templates
@@ -57,6 +78,10 @@ module PageObjects
         find(".select-category-template").click
         find(".select-kit-collection .select-kit-row", text: template_name).click
         find(".select-category-template").click
+      end
+
+      def new_topic_button
+        find("#create-topic")
       end
 
       CATEGORY_NAVIGATION_NEW_NAV_ITEM_SELECTOR = ".category-navigation .nav-item_new"
@@ -71,6 +96,14 @@ module PageObjects
 
       def click_new
         page.find(CATEGORY_NAVIGATION_NEW_NAV_ITEM_SELECTOR).click
+      end
+
+      def has_public_access_message?
+        page.has_content?(I18n.t("js.category.permissions.everyone_has_access"))
+      end
+
+      def has_no_public_access_message?
+        page.has_no_content?(I18n.t("js.category.permissions.everyone_has_access"))
       end
     end
   end

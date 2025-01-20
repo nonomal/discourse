@@ -1,18 +1,20 @@
+import { getOwner } from "@ember/owner";
+import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
 import {
   CREATE_TOPIC,
   EDIT,
   PRIVATE_MESSAGE,
   REPLY,
 } from "discourse/models/composer";
+import pretender, {
+  parsePostData,
+  response,
+} from "discourse/tests/helpers/create-pretender";
 import { currentUser } from "discourse/tests/helpers/qunit-helpers";
-import AppEvents from "discourse/services/app-events";
-import { module, test } from "qunit";
-import { getOwner } from "discourse-common/lib/get-owner";
-import { setupTest } from "ember-qunit";
 
 function createComposer(opts = {}) {
   opts.user ??= currentUser();
-  opts.appEvents = AppEvents.create();
   const store = getOwner(this).lookup("service:store");
   return store.createRecord("composer", opts);
 }
@@ -31,7 +33,7 @@ module("Unit | Model | composer", function (hooks) {
   });
 
   test("replyLength", function (assert) {
-    const replyLength = function (val, expectedLength) {
+    const replyLength = (val, expectedLength) => {
       const composer = createComposer.call(this, { reply: val });
       assert.strictEqual(composer.replyLength, expectedLength);
     };
@@ -67,7 +69,13 @@ module("Unit | Model | composer", function (hooks) {
   test("missingReplyCharacters", function (assert) {
     this.siteSettings.min_first_post_length = 40;
 
-    function missingReplyCharacters(val, isPM, isFirstPost, expected, message) {
+    const missingReplyCharacters = (
+      val,
+      isPM,
+      isFirstPost,
+      expected,
+      message
+    ) => {
       let action;
 
       if (isFirstPost) {
@@ -80,7 +88,7 @@ module("Unit | Model | composer", function (hooks) {
 
       const composer = createComposer.call(this, { reply: val, action });
       assert.strictEqual(composer.missingReplyCharacters, expected, message);
-    }
+    };
 
     missingReplyCharacters(
       "hi",
@@ -123,7 +131,7 @@ module("Unit | Model | composer", function (hooks) {
   });
 
   test("missingTitleCharacters", function (assert) {
-    const missingTitleCharacters = function (val, isPM, expected, message) {
+    const missingTitleCharacters = (val, isPM, expected, message) => {
       const composer = createComposer.call(this, {
         title: val,
         action: isPM ? PRIVATE_MESSAGE : REPLY,
@@ -146,24 +154,24 @@ module("Unit | Model | composer", function (hooks) {
   });
 
   test("replyDirty", function (assert) {
-    const composer = createComposer();
-    assert.ok(!composer.replyDirty, "by default it's false");
+    const composer = createComposer.call(this);
+    assert.false(composer.replyDirty, "false by default");
 
     composer.setProperties({
       originalText: "hello",
       reply: "hello",
     });
 
-    assert.ok(
-      !composer.replyDirty,
-      "it's false when the originalText is the same as the reply"
+    assert.false(
+      composer.replyDirty,
+      "false when the originalText is the same as the reply"
     );
     composer.set("reply", "hello world");
-    assert.ok(composer.replyDirty, "it's true when the reply changes");
+    assert.true(composer.replyDirty, "true when the reply changes");
   });
 
   test("appendText", function (assert) {
-    const composer = createComposer();
+    const composer = createComposer.call(this);
 
     assert.blank(composer.reply, "the reply is blank by default");
 
@@ -196,7 +204,7 @@ module("Unit | Model | composer", function (hooks) {
   });
 
   test("prependText", function (assert) {
-    const composer = createComposer();
+    const composer = createComposer.call(this);
 
     assert.blank(composer.reply, "the reply is blank by default");
 
@@ -221,16 +229,16 @@ module("Unit | Model | composer", function (hooks) {
   test("Title length for regular topics", function (assert) {
     this.siteSettings.min_topic_title_length = 5;
     this.siteSettings.max_topic_title_length = 10;
-    const composer = createComposer();
+    const composer = createComposer.call(this);
 
     composer.set("title", "asdf");
-    assert.ok(!composer.titleLengthValid, "short titles are not valid");
+    assert.false(composer.titleLengthValid, "short titles are not valid");
 
     composer.set("title", "this is a long title");
-    assert.ok(!composer.titleLengthValid, "long titles are not valid");
+    assert.false(composer.titleLengthValid, "long titles are not valid");
 
     composer.set("title", "just right");
-    assert.ok(composer.titleLengthValid, "in the range is okay");
+    assert.true(composer.titleLengthValid, "in the range is okay");
   });
 
   test("Title length for private messages", function (assert) {
@@ -239,13 +247,13 @@ module("Unit | Model | composer", function (hooks) {
     const composer = createComposer.call(this, { action: PRIVATE_MESSAGE });
 
     composer.set("title", "asdf");
-    assert.ok(!composer.titleLengthValid, "short titles are not valid");
+    assert.false(composer.titleLengthValid, "short titles are not valid");
 
     composer.set("title", "this is a long title");
-    assert.ok(!composer.titleLengthValid, "long titles are not valid");
+    assert.false(composer.titleLengthValid, "long titles are not valid");
 
     composer.set("title", "just right");
-    assert.ok(composer.titleLengthValid, "in the range is okay");
+    assert.true(composer.titleLengthValid, "in the range is okay");
   });
 
   test("Post length for private messages with non human users", function (assert) {
@@ -259,22 +267,19 @@ module("Unit | Model | composer", function (hooks) {
   });
 
   test("editingFirstPost", function (assert) {
-    const composer = createComposer();
-    assert.ok(!composer.editingFirstPost, "it's false by default");
+    const composer = createComposer.call(this);
+    assert.false(composer.editingFirstPost, "false by default");
 
     const store = getOwner(this).lookup("service:store");
     const post = store.createRecord("post", { id: 123, post_number: 2 });
     composer.setProperties({ post, action: EDIT });
-    assert.ok(
-      !composer.editingFirstPost,
-      "it's false when not editing the first post"
+    assert.false(
+      composer.editingFirstPost,
+      "false when not editing the first post"
     );
 
     post.set("post_number", 1);
-    assert.ok(
-      composer.editingFirstPost,
-      "it's true when editing the first post"
-    );
+    assert.true(composer.editingFirstPost, "true when editing the first post");
   });
 
   test("clearState", function (assert) {
@@ -301,7 +306,7 @@ module("Unit | Model | composer", function (hooks) {
       draftKey: "abcd",
       draftSequence: 1,
     });
-    assert.ok(!composer.categoryId, "Uncategorized by default");
+    assert.strictEqual(composer.categoryId, null, "Uncategorized by default");
   });
 
   test("initial category when uncategorized is not allowed", function (assert) {
@@ -311,8 +316,9 @@ module("Unit | Model | composer", function (hooks) {
       draftKey: "abcd",
       draftSequence: 1,
     });
-    assert.ok(
-      !composer.categoryId,
+    assert.strictEqual(
+      composer.categoryId,
+      null,
       "Uncategorized by default. Must choose a category."
     );
   });
@@ -334,7 +340,7 @@ module("Unit | Model | composer", function (hooks) {
   test("open with a quote", function (assert) {
     const quote =
       '[quote="neil, post:5, topic:413"]\nSimmer down you two.\n[/quote]';
-    const newComposer = function () {
+    const newComposer = () => {
       return openComposer.call(this, {
         action: REPLY,
         draftKey: "abcd",
@@ -348,9 +354,8 @@ module("Unit | Model | composer", function (hooks) {
       quote,
       "originalText is the quote"
     );
-    assert.strictEqual(
+    assert.false(
       newComposer().replyDirty,
-      false,
       "replyDirty is initially false with a quote"
     );
   });
@@ -358,7 +363,7 @@ module("Unit | Model | composer", function (hooks) {
   test("Title length for static page topics as admin", function (assert) {
     this.siteSettings.min_topic_title_length = 5;
     this.siteSettings.max_topic_title_length = 10;
-    const composer = createComposer();
+    const composer = createComposer.call(this);
 
     const store = getOwner(this).lookup("service:store");
     const post = store.createRecord("post", {
@@ -369,17 +374,17 @@ module("Unit | Model | composer", function (hooks) {
     composer.setProperties({ post, action: EDIT });
 
     composer.set("title", "asdf");
-    assert.ok(composer.titleLengthValid, "admins can use short titles");
+    assert.true(composer.titleLengthValid, "admins can use short titles");
 
     composer.set("title", "this is a long title");
-    assert.ok(composer.titleLengthValid, "admins can use long titles");
+    assert.true(composer.titleLengthValid, "admins can use long titles");
 
     composer.set("title", "just right");
-    assert.ok(composer.titleLengthValid, "in the range is okay");
+    assert.true(composer.titleLengthValid, "in the range is okay");
 
     composer.set("title", "");
-    assert.ok(
-      !composer.titleLengthValid,
+    assert.false(
+      composer.titleLengthValid,
       "admins must set title to at least 1 character"
     );
   });
@@ -426,7 +431,7 @@ module("Unit | Model | composer", function (hooks) {
       "composer.title_or_link_placeholder",
       "placeholder invites you to paste a link"
     );
-    assert.ok(composer.canEditTopicFeaturedLink, "can paste link");
+    assert.true(composer.canEditTopicFeaturedLink, "can paste link");
   });
 
   test("targetRecipientsArray contains types", function (assert) {
@@ -439,5 +444,42 @@ module("Unit | Model | composer", function (hooks) {
       { name: "staff", type: "group" },
       { name: "foo@bar.com", type: "email" },
     ]);
+  });
+
+  test("can add meta_data", async function (assert) {
+    let saved = false;
+    pretender.post("/posts", function (request) {
+      const data = parsePostData(request.requestBody);
+
+      assert.strictEqual(data.meta_data.some_custom_field, "some_value");
+      saved = true;
+
+      return response(200, {
+        success: true,
+        action: "create_post",
+        post: {
+          id: 12345,
+          topic_id: 280,
+          topic_slug: "internationalization-localization",
+        },
+      });
+    });
+    const composer = createComposer.call(this, {});
+
+    await composer.open({
+      action: CREATE_TOPIC,
+      title: "some topic title here",
+      categoryId: 1,
+      reply: "some reply here some reply here some reply here",
+      draftKey: "abcd",
+      draftSequence: 1,
+    });
+
+    assert.false(composer.loading);
+
+    composer.metaData = { some_custom_field: "some_value" };
+    await composer.save({});
+
+    assert.true(saved);
   });
 });

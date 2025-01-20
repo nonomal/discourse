@@ -1,6 +1,6 @@
-import Modifier from "ember-modifier";
 import { registerDestructor } from "@ember/destroyable";
-import { bind } from "discourse-common/utils/decorators";
+import Modifier from "ember-modifier";
+import { bind } from "discourse/lib/decorators";
 
 export default class DraggableModifier extends Modifier {
   hasStarted = false;

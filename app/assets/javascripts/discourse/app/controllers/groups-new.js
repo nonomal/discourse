@@ -1,10 +1,10 @@
 import Controller from "@ember/controller";
-import I18n from "I18n";
 import { action } from "@ember/object";
+import { service } from "@ember/service";
 import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
-import discourseComputed from "discourse-common/utils/decorators";
-import { inject as service } from "@ember/service";
+import discourseComputed from "discourse/lib/decorators";
+import { i18n } from "discourse-i18n";
 
 export function popupAutomaticMembershipAlert(group_id, email_domains) {
   if (!email_domains) {
@@ -26,28 +26,29 @@ export function popupAutomaticMembershipAlert(group_id, email_domains) {
 
     if (count > 0) {
       this.dialog.alert(
-        I18n.t(
-          "admin.groups.manage.membership.automatic_membership_user_count",
-          { count }
-        )
+        i18n("admin.groups.manage.membership.automatic_membership_user_count", {
+          count,
+        })
       );
     }
   });
 }
 
-export default Controller.extend({
-  dialog: service(),
-  saving: null,
+export default class GroupsNewController extends Controller {
+  @service dialog;
+  @service router;
+
+  saving = null;
 
   @discourseComputed("model.ownerUsernames")
   splitOwnerUsernames(owners) {
     return owners && owners.length ? owners.split(",") : [];
-  },
+  }
 
   @discourseComputed("model.usernames")
   splitUsernames(usernames) {
     return usernames && usernames.length ? usernames.split(",") : [];
-  },
+  }
 
   @action
   save() {
@@ -62,19 +63,19 @@ export default Controller.extend({
     group
       .create()
       .then(() => {
-        this.transitionToRoute("group.members", group.name);
+        this.router.transitionTo("group.members", group.name);
       })
       .catch(popupAjaxError)
       .finally(() => this.set("saving", false));
-  },
+  }
 
   @action
   updateOwnerUsernames(selected) {
     this.set("model.ownerUsernames", selected.join(","));
-  },
+  }
 
   @action
   updateUsernames(selected) {
     this.set("model.usernames", selected.join(","));
-  },
-});
+  }
+}

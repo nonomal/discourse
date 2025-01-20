@@ -1,13 +1,18 @@
 import Controller from "@ember/controller";
 import EmberObject, { action } from "@ember/object";
-import I18n from "I18n";
-import discourseComputed from "discourse-common/utils/decorators";
+import { scheduleOnce } from "@ember/runloop";
+import { service } from "@ember/service";
+import discourseComputed from "discourse/lib/decorators";
 import { exportEntity } from "discourse/lib/export-csv";
 import { outputExportResult } from "discourse/lib/export-result";
-import { scheduleOnce } from "@ember/runloop";
-import showModal from "discourse/lib/show-modal";
+import { i18n } from "discourse-i18n";
+import AdminStaffActionLogComponent from "../components/modal/staff-action-log-change";
+import StaffActionLogDetailsModal from "../components/modal/staff-action-log-details";
 
 export default class AdminLogsStaffActionLogsController extends Controller {
+  @service modal;
+  @service store;
+
   queryParams = ["filters"];
   model = null;
   filters = null;
@@ -15,7 +20,7 @@ export default class AdminLogsStaffActionLogsController extends Controller {
 
   @discourseComputed("filters.action_name")
   actionFilter(name) {
-    return name ? I18n.t("admin.logs.staff_actions.actions." + name) : null;
+    return name ? i18n("admin.logs.staff_actions.actions." + name) : null;
   }
 
   @discourseComputed("filters")
@@ -34,7 +39,7 @@ export default class AdminLogsStaffActionLogsController extends Controller {
             .map((historyAction) => ({
               id: historyAction.id,
               action_id: historyAction.action_id,
-              name: I18n.t(
+              name: i18n(
                 "admin.logs.staff_actions.actions." + historyAction.id
               ),
               name_raw: historyAction.id,
@@ -151,21 +156,16 @@ export default class AdminLogsStaffActionLogsController extends Controller {
   @action
   showDetailsModal(model, event) {
     event?.preventDefault();
-    showModal("admin-staff-action-log-details", {
-      model,
-      admin: true,
-      modalClass: "log-details-modal",
+    this.modal.show(StaffActionLogDetailsModal, {
+      model: { staffActionLog: model },
     });
   }
 
   @action
   showCustomDetailsModal(model, event) {
     event?.preventDefault();
-    let modal = showModal("admin-theme-change", {
-      model,
-      admin: true,
-      modalClass: "history-modal",
+    this.modal.show(AdminStaffActionLogComponent, {
+      model: { staffActionLog: model },
     });
-    modal.loadDiff();
   }
 }

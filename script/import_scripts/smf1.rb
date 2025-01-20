@@ -5,9 +5,9 @@ require "htmlentities"
 require File.expand_path(File.dirname(__FILE__) + "/base.rb")
 
 class ImportScripts::Smf1 < ImportScripts::Base
-  BATCH_SIZE ||= 5000
-  UPLOADS_DIR ||= ENV["UPLOADS_DIR"].presence
-  FORUM_URL ||= ENV["FORUM_URL"].presence
+  BATCH_SIZE = 5000
+  UPLOADS_DIR = ENV["UPLOADS_DIR"].presence
+  FORUM_URL = ENV["FORUM_URL"].presence
 
   def initialize
     fail "UPLOADS_DIR env variable is required (example: '/path/to/attachments')" unless UPLOADS_DIR
@@ -452,10 +452,10 @@ class ImportScripts::Smf1 < ImportScripts::Base
 
         if upload = create_upload(post.user_id, path, u["filename"])
           html = html_for_upload(upload, u["filename"])
-          unless post.raw[html] || PostUpload.where(upload: upload, post: post).exists?
+          unless post.raw[html] || UploadReference.where(upload: upload, target: post).exists?
             post.raw += "\n\n#{html}\n\n"
             post.save
-            PostUpload.create(upload: upload, post: post)
+            UploadReference.ensure_exist!(upload_ids: [upload.id], target: post)
           end
         end
 
@@ -492,7 +492,7 @@ class ImportScripts::Smf1 < ImportScripts::Base
     end
   end
 
-  FEEDBACKS ||= -"feedbacks"
+  FEEDBACKS = -"feedbacks"
 
   def import_feedbacks
     return if mysql_query("SHOW TABLES LIKE 'smf_feedback'").first.nil?
@@ -613,7 +613,7 @@ class ImportScripts::Smf1 < ImportScripts::Base
     ScreenedIpAddress.roll_up
   end
 
-  IGNORED_BBCODE ||= %w[
+  IGNORED_BBCODE = %w[
     black
     blue
     center

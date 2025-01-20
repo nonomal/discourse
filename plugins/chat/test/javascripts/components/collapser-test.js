@@ -1,9 +1,8 @@
-import { setupRenderingTest } from "discourse/tests/helpers/component-test";
+import { htmlSafe } from "@ember/template";
 import { click, render } from "@ember/test-helpers";
 import hbs from "htmlbars-inline-precompile";
-import { exists, visible } from "discourse/tests/helpers/qunit-helpers";
 import { module, test } from "qunit";
-import { htmlSafe } from "@ember/template";
+import { setupRenderingTest } from "discourse/tests/helpers/component-test";
 
 module("Discourse Chat | Component | collapser", function (hooks) {
   setupRenderingTest(hooks);
@@ -13,7 +12,7 @@ module("Discourse Chat | Component | collapser", function (hooks) {
 
     await render(hbs`<Collapser @header={{this.header}} />`);
 
-    assert.true(exists(".cat"));
+    assert.dom(".cat").exists();
   });
 
   test("collapses and expands yielded body", async function (assert) {
@@ -23,16 +22,12 @@ module("Discourse Chat | Component | collapser", function (hooks) {
       </Collapser>
     `);
 
-    const openButton = ".chat-message-collapser-closed";
-    const closeButton = ".chat-message-collapser-opened";
-    const body = ".cat";
+    assert.dom(".cat").isVisible();
 
-    assert.true(visible(body));
+    await click(".chat-message-collapser-opened");
+    assert.dom(".cat").isNotVisible();
 
-    await click(closeButton);
-    assert.false(visible(body));
-
-    await click(openButton);
-    assert.true(visible(body));
+    await click(".chat-message-collapser-closed");
+    assert.dom(".cat").isVisible();
   });
 });

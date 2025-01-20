@@ -1,10 +1,10 @@
-import { module, test } from "qunit";
-import { NOTIFICATION_TYPES } from "discourse/tests/fixtures/concerns/notification-types";
-import { deepMerge } from "discourse-common/lib/object";
-import { createRenderDirector } from "discourse/tests/helpers/notification-types-helper";
-import Notification from "discourse/models/notification";
-import I18n from "I18n";
 import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
+import { deepMerge } from "discourse/lib/object";
+import Notification from "discourse/models/notification";
+import { NOTIFICATION_TYPES } from "discourse/tests/fixtures/concerns/notification-types";
+import { createRenderDirector } from "discourse/tests/helpers/notification-types-helper";
+import { i18n } from "discourse-i18n";
 
 function getNotification(overrides = {}) {
   return Notification.create(
@@ -54,7 +54,7 @@ module("Unit | Notification Types | granted-badge", function (hooks) {
     );
     assert.strictEqual(
       director.description,
-      I18n.t("notifications.granted_badge", { description: "Badge 15" }),
+      i18n("notifications.granted_badge", { description: "Badge 15" }),
       "contains the right content"
     );
   });

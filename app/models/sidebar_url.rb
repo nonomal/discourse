@@ -1,10 +1,53 @@
 # frozen_string_literal: true
 
 class SidebarUrl < ActiveRecord::Base
-  FULL_RELOAD_LINKS_REGEX = [%r{\A/my/[a-z_\-/]+\z}, %r{\A/safe-mode\z}]
+  enum :segment, { primary: 0, secondary: 1 }, scopes: false, suffix: true
+
   MAX_ICON_LENGTH = 40
   MAX_NAME_LENGTH = 80
-  MAX_VALUE_LENGTH = 200
+  MAX_VALUE_LENGTH = 1000
+  COMMUNITY_SECTION_LINKS = [
+    {
+      name: "Topics",
+      path: "/latest",
+      icon: "layer-group",
+      segment: SidebarUrl.segments["primary"],
+    },
+    {
+      name: "My Drafts",
+      path: "/my/activity",
+      icon: "far-pen-to-square",
+      segment: SidebarUrl.segments["primary"],
+    },
+    { name: "Review", path: "/review", icon: "flag", segment: SidebarUrl.segments["primary"] },
+    { name: "Admin", path: "/admin", icon: "wrench", segment: SidebarUrl.segments["primary"] },
+    {
+      name: "Invite",
+      path: "/new-invite",
+      icon: "paper-plane",
+      segment: SidebarUrl.segments["primary"],
+    },
+    { name: "Users", path: "/u", icon: "users", segment: SidebarUrl.segments["secondary"] },
+    {
+      name: "About",
+      path: "/about",
+      icon: "circle-info",
+      segment: SidebarUrl.segments["secondary"],
+    },
+    {
+      name: "FAQ",
+      path: "/faq",
+      icon: "circle-question",
+      segment: SidebarUrl.segments["secondary"],
+    },
+    { name: "Groups", path: "/g", icon: "user-group", segment: SidebarUrl.segments["secondary"] },
+    {
+      name: "Badges",
+      path: "/badges",
+      icon: "certificate",
+      segment: SidebarUrl.segments["secondary"],
+    },
+  ]
 
   validates :icon, presence: true, length: { maximum: MAX_ICON_LENGTH }
   validates :name, presence: true, length: { maximum: MAX_NAME_LENGTH }
@@ -31,10 +74,6 @@ class SidebarUrl < ActiveRecord::Base
   def set_external
     self.external = value.start_with?("http://", "https://")
   end
-
-  def full_reload?
-    FULL_RELOAD_LINKS_REGEX.any? { |regex| value =~ regex }
-  end
 end
 
 # == Schema Information
@@ -43,9 +82,10 @@ end
 #
 #  id         :bigint           not null, primary key
 #  name       :string(80)       not null
-#  value      :string(200)      not null
+#  value      :string(1000)     not null
 #  created_at :datetime         not null
 #  updated_at :datetime         not null
 #  icon       :string(40)       not null
 #  external   :boolean          default(FALSE), not null
+#  segment    :integer          default("primary"), not null
 #

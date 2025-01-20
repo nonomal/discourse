@@ -31,11 +31,19 @@
       {{/if}}
 
       <div class="group-info-names">
-        <span class="group-info-name">{{this.groupName}}</span>
+        <GroupInfo @group={{this.model}} />
 
-        {{#if this.model.full_name}}<div
-            class="group-info-full-name"
-          >{{this.model.name}}</div>{{/if}}
+        {{#if (and this.canManageGroup this.model.automatic)}}
+          <DTooltip class="group-automatic-tooltip">
+            <:trigger>
+              {{d-icon "gear"}}
+              {{i18n "admin.groups.manage.membership.automatic"}}
+            </:trigger>
+            <:content>
+              {{i18n "admin.groups.manage.membership.automatic_tooltip"}}
+            </:content>
+          </DTooltip>
+        {{/if}}
       </div>
 
       <div class="group-details-button">
@@ -48,28 +56,29 @@
         {{#if this.currentUser.admin}}
           {{#if this.model.automatic}}
             <DButton
-              @action={{action "toggleDeleteTooltip"}}
-              @class="btn-default"
-              @icon="question-circle"
+              @action={{this.toggleDeleteTooltip}}
+              @icon="circle-question"
               @label="admin.groups.delete"
+              class="btn-default"
             />
           {{else}}
             <DButton
-              @action={{action "destroyGroup"}}
+              @action={{this.destroyGroup}}
               @disabled={{this.destroying}}
-              @icon="trash-alt"
-              @class="btn-danger"
+              @icon="trash-can"
               @label="admin.groups.delete"
+              class="btn-danger"
+              data-test-selector="delete-group-button"
             />
           {{/if}}
         {{/if}}
 
         {{#if this.displayGroupMessageButton}}
           <DButton
-            @action={{action "messageGroup"}}
-            @class="btn-primary group-message-button"
+            @action={{this.messageGroup}}
             @icon="envelope"
             @label="groups.message"
+            class="btn-primary group-message-button"
           />
         {{/if}}
       </div>
@@ -90,6 +99,7 @@
         <p>{{html-safe this.model.bio_cooked}}</p>
       </div>
     {{/if}}
+
   </div>
 
   <div class="user-content-wrapper">

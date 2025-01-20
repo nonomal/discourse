@@ -1,13 +1,13 @@
 import { cancel } from "@ember/runloop";
-import discourseLater from "discourse-common/lib/later";
-import { CANCELLED_STATUS } from "discourse/lib/autocomplete";
-import Category from "discourse/models/category";
 import { Promise } from "rsvp";
-import { SEPARATOR } from "discourse/lib/category-hashtags";
-import { TAG_HASHTAG_POSTFIX } from "discourse/lib/tag-hashtags";
-import discourseDebounce from "discourse-common/lib/debounce";
-import { isTesting } from "discourse-common/config/environment";
 import { ajax } from "discourse/lib/ajax";
+import { CANCELLED_STATUS } from "discourse/lib/autocomplete";
+import { SEPARATOR } from "discourse/lib/category-hashtags";
+import discourseDebounce from "discourse/lib/debounce";
+import { isTesting } from "discourse/lib/environment";
+import discourseLater from "discourse/lib/later";
+import { TAG_HASHTAG_POSTFIX } from "discourse/lib/tag-hashtags";
+import Category from "discourse/models/category";
 
 let cache = {};
 let cacheTime;

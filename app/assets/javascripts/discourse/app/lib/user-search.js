@@ -1,12 +1,13 @@
 import { cancel } from "@ember/runloop";
-import discourseLater from "discourse-common/lib/later";
-import { CANCELLED_STATUS } from "discourse/lib/autocomplete";
 import { Promise } from "rsvp";
-import discourseDebounce from "discourse-common/lib/debounce";
-import { emailValid } from "discourse/lib/utilities";
-import { isTesting } from "discourse-common/config/environment";
-import { userPath } from "discourse/lib/url";
 import { ajax } from "discourse/lib/ajax";
+import { CANCELLED_STATUS } from "discourse/lib/autocomplete";
+import { camelCaseToSnakeCase } from "discourse/lib/case-converter";
+import discourseDebounce from "discourse/lib/debounce";
+import { isTesting } from "discourse/lib/environment";
+import discourseLater from "discourse/lib/later";
+import { userPath } from "discourse/lib/url";
+import { emailValid } from "discourse/lib/utilities";
 
 let cache = {},
   cacheKey,
@@ -20,10 +21,6 @@ export function resetUserSearchCache() {
   cacheTime = null;
   currentTerm = null;
   oldSearch = null;
-}
-
-export function camelCaseToSnakeCase(text) {
-  return text.replace(/([a-zA-Z])(?=[A-Z])/g, "$1_").toLowerCase();
 }
 
 function performSearch(

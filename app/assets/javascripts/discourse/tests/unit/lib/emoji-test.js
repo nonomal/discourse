@@ -1,9 +1,9 @@
-import { emojiSearch } from "pretty-text/emoji";
-import { emojiUnescape } from "discourse/lib/text";
-import { module, test } from "qunit";
-import { IMAGE_VERSION as v } from "pretty-text/emoji/version";
+import { getOwner } from "@ember/owner";
 import { setupTest } from "ember-qunit";
-import { getOwner } from "discourse-common/lib/get-owner";
+import { emojiSearch } from "pretty-text/emoji";
+import { IMAGE_VERSION as v } from "pretty-text/emoji/version";
+import { module, test } from "qunit";
+import { emojiUnescape } from "discourse/lib/text";
 
 module("Unit | Utility | emoji", function (hooks) {
   setupTest(hooks);
@@ -172,7 +172,7 @@ module("Unit | Utility | emoji", function (hooks) {
   test("search does partial-match on emoji aliases", function (assert) {
     const matches = emojiSearch("instru");
 
-    assert.ok(matches.includes("woman_teacher"));
-    assert.ok(matches.includes("violin"));
+    assert.true(matches.includes("woman_teacher"));
+    assert.true(matches.includes("violin"));
   });
 });

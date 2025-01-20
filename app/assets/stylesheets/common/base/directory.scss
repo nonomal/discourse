@@ -4,7 +4,13 @@
 }
 
 .directory {
+  .directory-value-list-item:not(:empty)
+    ~ .directory-value-list-item:not(:empty):before {
+    content: "| ";
+  }
+
   margin-bottom: 100px;
+  background: var(--d-content-background);
 
   &.users-directory {
     .directory-group-selector {
@@ -69,18 +75,9 @@
       }
     }
   }
-  .modal-footer {
-    display: flex;
+  .d-modal__footer {
     justify-content: space-between;
-
-    .reset-to-default {
-      margin-right: 0;
-    }
   }
-}
-
-.edit-user-directory-columns-modal .modal-inner-container {
-  min-width: 450px;
 }
 
 @container (min-width: 47em) {
@@ -126,7 +123,13 @@
   &__header,
   &__body,
   &__row {
-    display: contents; // we'll be able to remove this with subgrid support
+    display: contents;
+
+    @supports (grid-template-rows: subgrid) {
+      display: grid;
+      grid-column: 1 / -1;
+      grid-template-columns: subgrid;
+    }
   }
 
   &__column-header,
@@ -190,16 +193,11 @@
   .user-info {
     display: flex;
     min-width: 0;
-    margin: 0;
     width: 100%;
-    .user-image {
-      padding-right: 0.5em;
-      margin-right: 0.5em;
-    }
     .user-detail {
       padding: 0;
       width: 100%;
-      @media screen and (max-width: 600px) {
+      @include breakpoint(tablet) {
         // overrides existing media query
         font-size: var(--font-0);
       }
@@ -318,7 +316,7 @@
       }
     }
 
-    [class*="--empty"] {
+    .--empty {
       display: none;
     }
   }

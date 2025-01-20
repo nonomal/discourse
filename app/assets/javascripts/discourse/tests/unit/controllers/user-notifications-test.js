@@ -1,11 +1,8 @@
-import { module, test } from "qunit";
+import EmberObject from "@ember/object";
 import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
 import sinon from "sinon";
 import pretender, { response } from "discourse/tests/helpers/create-pretender";
-import EmberObject from "@ember/object";
-import * as showModal from "discourse/lib/show-modal";
-import User from "discourse/models/user";
-import I18n from "I18n";
 
 module("Unit | Controller | user-notifications", function (hooks) {
   setupTest(hooks);
@@ -21,10 +18,7 @@ module("Unit | Controller | user-notifications", function (hooks) {
 
     await controller.markRead();
 
-    assert.strictEqual(
-      model.every(({ read }) => read === true),
-      true
-    );
+    assert.true(model.every(({ read }) => read === true));
   });
 
   test("Mark read does not mark models read when response is not successful", async function (assert) {
@@ -46,7 +40,10 @@ module("Unit | Controller | user-notifications", function (hooks) {
 
   test("Marks all notifications read when no high priority notifications", function (assert) {
     let markRead = false;
-    const currentUser = User.create({ unread_high_priority_notifications: 0 });
+    const store = this.owner.lookup("service:store");
+    const currentUser = store.createRecord("user", {
+      unread_high_priority_notifications: 0,
+    });
     const controller = this.owner.lookup("controller:user-notifications");
     controller.setProperties({
       model: [],
@@ -56,31 +53,6 @@ module("Unit | Controller | user-notifications", function (hooks) {
 
     controller.send("resetNew");
 
-    assert.strictEqual(markRead, true);
-  });
-
-  test("Shows modal when has high priority notifications", function (assert) {
-    let capturedProperties;
-    sinon
-      .stub(showModal, "default")
-      .withArgs("dismiss-notification-confirmation")
-      .returns({
-        setProperties: (properties) => (capturedProperties = properties),
-      });
-
-    const currentUser = User.create({ unread_high_priority_notifications: 1 });
-    const controller = this.owner.lookup("controller:user-notifications");
-    controller.setProperties({ currentUser });
-    const markReadFake = sinon.fake();
-    sinon.stub(controller, "markRead").callsFake(markReadFake);
-
-    controller.send("resetNew");
-
-    assert.strictEqual(
-      capturedProperties.confirmationMessage,
-      I18n.t("notifications.dismiss_confirmation.body.default", { count: 1 })
-    );
-    capturedProperties.dismissNotifications();
-    assert.strictEqual(markReadFake.callCount, 1);
+    assert.true(markRead);
   });
 });

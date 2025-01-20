@@ -12,7 +12,7 @@ RSpec.describe FileStore::S3Store do
   let(:s3_object) { stub }
   let(:upload_path) { Discourse.store.upload_path }
 
-  fab!(:optimized_image) { Fabricate(:optimized_image) }
+  fab!(:optimized_image)
   let(:optimized_image_file) { file_from_fixtures("logo.png") }
   let(:uploaded_file) { file_from_fixtures("logo.png") }
   fab!(:upload) { Fabricate(:upload, sha1: Digest::SHA1.hexdigest("secret image string")) }
@@ -39,6 +39,7 @@ RSpec.describe FileStore::S3Store do
               acl: "public-read",
               cache_control: "max-age=31556952, public, immutable",
               content_type: "image/png",
+              content_disposition: "inline; filename=\"logo.png\"; filename*=UTF-8''logo.png",
               body: uploaded_file,
             },
           )
@@ -90,8 +91,7 @@ RSpec.describe FileStore::S3Store do
                 acl: "private",
                 cache_control: "max-age=31556952, public, immutable",
                 content_type: "application/pdf",
-                content_disposition:
-                  "attachment; filename=\"#{upload.original_filename}\"; filename*=UTF-8''#{upload.original_filename}",
+                content_disposition: "inline; filename=\"small.pdf\"; filename*=UTF-8''small.pdf",
                 body: uploaded_file,
               },
             )
@@ -118,6 +118,7 @@ RSpec.describe FileStore::S3Store do
                 acl: "public-read",
                 cache_control: "max-age=31556952, public, immutable",
                 content_type: "image/png",
+                content_disposition: "inline; filename=\"logo.png\"; filename*=UTF-8''logo.png",
                 body: uploaded_file,
               },
             )
@@ -128,6 +129,37 @@ RSpec.describe FileStore::S3Store do
           )
 
           expect(store.url_for(upload)).to eq(upload.url)
+        end
+      end
+
+      describe "when ACLs are disabled" do
+        it "doesn't supply an ACL" do
+          SiteSetting.s3_use_acls = false
+          SiteSetting.authorized_extensions = "pdf|png|jpg|gif"
+          upload =
+            Fabricate(:upload, original_filename: "small.pdf", extension: "pdf", secure: true)
+
+          s3_helper.expects(:s3_bucket).returns(s3_bucket)
+          s3_bucket
+            .expects(:object)
+            .with(regexp_matches(%r{original/\d+X.*/#{upload.sha1}\.pdf}))
+            .returns(s3_object)
+          s3_object
+            .expects(:put)
+            .with(
+              {
+                acl: nil,
+                cache_control: "max-age=31556952, public, immutable",
+                content_type: "application/pdf",
+                content_disposition: "inline; filename=\"small.pdf\"; filename*=UTF-8''small.pdf",
+                body: uploaded_file,
+              },
+            )
+            .returns(Aws::S3::Types::PutObjectOutput.new(etag: "\"#{etag}\""))
+
+          expect(store.store_upload(uploaded_file, upload)).to match(
+            %r{//s3-upload-bucket\.s3\.dualstack\.us-west-1\.amazonaws\.com/original/\d+X.*/#{upload.sha1}\.pdf},
+          )
         end
       end
     end
@@ -186,40 +218,20 @@ RSpec.describe FileStore::S3Store do
       let(:external_upload_stub) { Fabricate(:image_external_upload_stub) }
       let(:existing_external_upload_key) { external_upload_stub.key }
 
-      before { SiteSetting.authorized_extensions = "pdf|png" }
+      before { SiteSetting.authorized_extensions = "svg|png" }
 
-      it "does not provide a content_disposition for images" do
-        s3_helper
-          .expects(:copy)
-          .with(external_upload_stub.key, kind_of(String), options: upload_opts)
-          .returns(%w[path etag])
-        s3_helper.expects(:delete_object).with(external_upload_stub.key)
-        upload =
-          Fabricate(
-            :upload,
-            extension: "png",
-            sha1: upload_sha1,
-            original_filename: original_filename,
-          )
-        store.move_existing_stored_upload(
-          existing_external_upload_key: external_upload_stub.key,
-          upload: upload,
-          content_type: "image/png",
-        )
-      end
-
-      context "when the file is a PDF" do
+      context "when the file is a SVG" do
         let(:external_upload_stub) do
           Fabricate(:attachment_external_upload_stub, original_filename: original_filename)
         end
-        let(:original_filename) { "small.pdf" }
-        let(:uploaded_file) { file_from_fixtures("small.pdf", "pdf") }
+        let(:original_filename) { "small.svg" }
+        let(:uploaded_file) { file_from_fixtures("small.svg", "svg") }
 
         it "adds an attachment content-disposition with the original filename" do
           disp_opts = {
             content_disposition:
               "attachment; filename=\"#{original_filename}\"; filename*=UTF-8''#{original_filename}",
-            content_type: "application/pdf",
+            content_type: "image/svg+xml",
           }
           s3_helper
             .expects(:copy)
@@ -235,7 +247,7 @@ RSpec.describe FileStore::S3Store do
           store.move_existing_stored_upload(
             existing_external_upload_key: external_upload_stub.key,
             upload: upload,
-            content_type: "application/pdf",
+            content_type: "image/svg+xml",
           )
         end
       end

@@ -1,24 +1,28 @@
 import Component from "@glimmer/component";
-import { action } from "@ember/object";
-import { inject as service } from "@ember/service";
 import { tracked } from "@glimmer/tracking";
-import I18n from "I18n";
+import { action } from "@ember/object";
+import { service } from "@ember/service";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import { i18n } from "discourse-i18n";
+import FormTemplateValidationOptionsModal from "admin/components/modal/form-template-validation-options";
 import { templateFormFields } from "admin/lib/template-form-fields";
 import FormTemplate from "admin/models/form-template";
-import showModal from "discourse/lib/show-modal";
 
 export default class FormTemplateForm extends Component {
   @service router;
   @service dialog;
+  @service modal;
+
   @tracked formSubmitted = false;
   @tracked templateContent = this.args.model?.template || "";
   @tracked templateName = this.args.model?.name || "";
+  @tracked showFormTemplateFormPreview;
+
   isEditing = this.args.model?.id ? true : false;
   quickInsertFields = [
     {
       type: "checkbox",
-      icon: "check-square",
+      icon: "square-check",
     },
     {
       type: "input",
@@ -30,11 +34,11 @@ export default class FormTemplateForm extends Component {
     },
     {
       type: "dropdown",
-      icon: "chevron-circle-down",
+      icon: "circle-chevron-down",
     },
     {
       type: "upload",
-      icon: "cloud-upload-alt",
+      icon: "cloud-arrow-up",
     },
     {
       type: "multiselect",
@@ -87,7 +91,7 @@ export default class FormTemplateForm extends Component {
   @action
   onDelete() {
     return this.dialog.yesNoConfirm({
-      message: I18n.t("admin.form_templates.delete_confirm"),
+      message: i18n("admin.form_templates.delete_confirm"),
       didConfirm: () => {
         FormTemplate.deleteTemplate(this.args.model.id)
           .then(() => {
@@ -111,9 +115,7 @@ export default class FormTemplateForm extends Component {
 
   @action
   showValidationOptionsModal() {
-    return showModal("admin-form-template-validation-options", {
-      admin: true,
-    });
+    return this.modal.show(FormTemplateValidationOptionsModal);
   }
 
   @action
@@ -129,11 +131,7 @@ export default class FormTemplateForm extends Component {
 
     FormTemplate.validateTemplate(data)
       .then(() => {
-        return showModal("form-template-form-preview", {
-          model: {
-            content: this.templateContent,
-          },
-        });
+        this.showFormTemplateFormPreview = true;
       })
       .catch(popupAjaxError);
   }

@@ -1,7 +1,7 @@
-import { classNames } from "@ember-decorators/component";
 import Component from "@ember/component";
 import { action } from "@ember/object";
-import discourseComputed from "discourse-common/utils/decorators";
+import { classNames } from "@ember-decorators/component";
+import discourseComputed from "discourse/lib/decorators";
 
 @classNames("inline-edit")
 export default class InlineEditCheckbox extends Component {

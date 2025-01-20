@@ -1,15 +1,15 @@
-import { module, test } from "qunit";
+import { getOwner } from "@ember/owner";
 import { setupTest } from "ember-qunit";
-import { getOwner } from "discourse-common/lib/get-owner";
+import { module, test } from "qunit";
 
 module("Unit | Model | invite", function (hooks) {
   setupTest(hooks);
 
   test("create", function (assert) {
     const store = getOwner(this).lookup("service:store");
-    assert.ok(
-      store.createRecord("invite"),
-      "it can be created without arguments"
+    assert.true(
+      !!store.createRecord("invite"),
+      "can be created without arguments"
     );
   });
 });

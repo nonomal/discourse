@@ -11,8 +11,28 @@ if Rails.env.development? && !Rails.configuration.cache_classes && Discourse.run
     "#{Rails.root}/plugins",
   ]
 
+  if Listen::Adapter::Linux.usable?
+    # The Listen gem watches recursively, which has a cost per-file on Linux (via rb-inotify)
+    # Skip a bunch of unnecessary directories to reduce the cost
+    # Ref https://github.com/guard/listen/issues/556
+    require "rb-inotify"
+    INotify::Notifier.prepend(
+      Module.new do
+        def watch(path, *flags, &callback)
+          return if path.end_with?("/node_modules", "/.git")
+          super(path, *flags, &callback)
+        end
+      end,
+    )
+  end
+
   Listen
-    .to(*paths, only: /\.rb$/) do |modified, added, removed|
+    .to(
+      *paths,
+      # Aside from .rb files, this will also match site_settings.yml, as well as any plugin settings.yml files.
+      only: /(\.rb|settings.yml)$/,
+      ignore: [/node_modules/],
+    ) do |modified, added, removed|
       supervisor_pid = UNICORN_DEV_SUPERVISOR_PID
       auto_restart = supervisor_pid && ENV["AUTO_RESTART"] != "0"
 
@@ -21,7 +41,10 @@ if Rails.env.development? && !Rails.configuration.cache_classes && Discourse.run
       not_autoloaded =
         files.filter_map do |file|
           autoloaded = Rails.autoloaders.main.__autoloads.key? file
-          Pathname.new(file).relative_path_from(Rails.root) if !autoloaded
+
+          if !autoloaded && !file.match(%r{/spec/})
+            Pathname.new(file).relative_path_from(Rails.root)
+          end
         end
 
       if not_autoloaded.length > 0

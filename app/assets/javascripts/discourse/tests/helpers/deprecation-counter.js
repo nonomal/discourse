@@ -1,6 +1,7 @@
 import { registerDeprecationHandler } from "@ember/debug";
-import { bind } from "discourse-common/utils/decorators";
-import { registerDeprecationHandler as registerDiscourseDeprecationHandler } from "discourse-common/lib/deprecated";
+import DEPRECATION_WORKFLOW from "discourse/deprecation-workflow";
+import { bind } from "discourse/lib/decorators";
+import { registerDeprecationHandler as registerDiscourseDeprecationHandler } from "discourse/lib/deprecated";
 
 export default class DeprecationCounter {
   counts = new Map();
@@ -34,7 +35,11 @@ export default class DeprecationCounter {
     let { id } = options;
     id ||= "discourse.(unknown)";
 
-    this.incrementDeprecation(id);
+    const matchingConfig = this.#configById.get(id);
+
+    if (matchingConfig !== "silence") {
+      this.incrementDeprecation(id);
+    }
   }
 
   incrementDeprecation(id) {
@@ -75,8 +80,7 @@ function reportToTestem(id) {
 }
 
 export function setupDeprecationCounter(qunit) {
-  const config = window.deprecationWorkflow?.config?.workflow || {};
-  const deprecationCounter = new DeprecationCounter(config);
+  const deprecationCounter = new DeprecationCounter(DEPRECATION_WORKFLOW);
 
   qunit.begin(() => deprecationCounter.start());
 

@@ -36,9 +36,8 @@ class ReviewableClaimedTopicsController < ApplicationController
   def notify_users(topic, claimed_by)
     group_ids = Set.new([Group::AUTO_GROUPS[:staff]])
 
-    if SiteSetting.enable_category_group_moderation? &&
-         group_id = topic.category&.reviewable_by_group_id.presence
-      group_ids.add(group_id)
+    if SiteSetting.enable_category_group_moderation? && topic.category
+      group_ids.merge(topic.category.moderating_group_ids)
     end
 
     if claimed_by.present?
@@ -49,8 +48,6 @@ class ReviewableClaimedTopicsController < ApplicationController
 
     MessageBus.publish("/reviewable_claimed", data, group_ids: group_ids.to_a)
 
-    if !SiteSetting.legacy_navigation_menu?
-      Jobs.enqueue(:refresh_users_reviewable_counts, group_ids: group_ids.to_a)
-    end
+    Jobs.enqueue(:refresh_users_reviewable_counts, group_ids: group_ids.to_a)
   end
 end

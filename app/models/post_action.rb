@@ -82,6 +82,15 @@ class PostAction < ActiveRecord::Base
         result = result.joins(post: :topic).where("topics.category_id = ?", opts[:category_id])
       end
     end
+
+    if opts[:group_ids]
+      result =
+        result
+          .joins("INNER JOIN users ON users.id = post_actions.user_id")
+          .joins("INNER JOIN group_users ON group_users.user_id = users.id")
+          .where("group_users.group_id IN (?)", opts[:group_ids])
+    end
+
     result.group("date(post_actions.created_at)").order("date(post_actions.created_at)").count
   end
 
@@ -114,19 +123,6 @@ class PostAction < ActiveRecord::Base
     RateLimiter.new(user, "post_action-#{post.id}_#{post_action_type_id}", 4, 1.minute).performed!
   end
 
-  def self.act(created_by, post, post_action_type_id, opts = {})
-    Discourse.deprecate(
-      "PostAction.act is deprecated. Use `PostActionCreator` instead.",
-      output_in_test: true,
-      drop_from: "2.9.0",
-    )
-
-    result =
-      PostActionCreator.new(created_by, post, post_action_type_id, message: opts[:message]).perform
-
-    result.success? ? result.post_action : nil
-  end
-
   def self.copy(original_post, target_post)
     cols_to_copy = (column_names - %w[id post_id]).join(", ")
 
@@ -140,16 +136,6 @@ class PostAction < ActiveRecord::Base
     target_post.post_actions.each { |post_action| post_action.update_counters }
   end
 
-  def self.remove_act(user, post, post_action_type_id)
-    Discourse.deprecate(
-      "PostAction.remove_act is deprecated. Use `PostActionDestroyer` instead.",
-      output_in_test: true,
-      drop_from: "2.9.0",
-    )
-
-    PostActionDestroyer.new(user, post, post_action_type_id).perform
-  end
-
   def remove_act!(user)
     trash!(user)
     # NOTE: save is called to ensure all callbacks are called
@@ -158,17 +144,21 @@ class PostAction < ActiveRecord::Base
     save
   end
 
+  def post_action_type_view
+    @post_action_type_view ||= PostActionTypeView.new
+  end
+
   def is_like?
-    post_action_type_id == PostActionType.types[:like]
+    post_action_type_id == post_action_type_view.types[:like]
   end
 
   def is_flag?
-    !!PostActionType.notify_flag_types[post_action_type_id]
+    !!post_action_type_view.notify_flag_types[post_action_type_id]
   end
 
   def is_private_message?
-    post_action_type_id == PostActionType.types[:notify_user] ||
-      post_action_type_id == PostActionType.types[:notify_moderators]
+    post_action_type_id == post_action_type_view.types[:notify_user] ||
+      post_action_type_id == post_action_type_view.types[:notify_moderators]
   end
 
   # A custom rate limiter for this model
@@ -196,7 +186,8 @@ class PostAction < ActiveRecord::Base
   end
 
   def ensure_unique_actions
-    post_action_type_ids = is_flag? ? PostActionType.notify_flag_types.values : post_action_type_id
+    post_action_type_ids =
+      is_flag? ? post_action_type_view.notify_flag_types.values : post_action_type_id
 
     acted =
       PostAction
@@ -212,7 +203,7 @@ class PostAction < ActiveRecord::Base
   end
 
   def post_action_type_key
-    PostActionType.types[post_action_type_id]
+    post_action_type_view.types[post_action_type_id]
   end
 
   def update_counters

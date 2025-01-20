@@ -2,8 +2,6 @@
   @composerModel={{this.model}}
   @replyOptions={{this.model.replyOptions}}
   @canWhisper={{this.canWhisper}}
-  @openComposer={{this.openComposer}}
-  @closeComposer={{this.closeComposer}}
   @action={{this.model.action}}
   @tabindex={{this.tabindex}}
   @topic={{this.model.topic}}
@@ -13,6 +11,6 @@
   @options={{hash mobilePlacementStrategy="fixed"}}
 />
 
-<span class="action-title">
+<span class="action-title" role="heading" aria-level="1">
   {{this.actionTitle}}
 </span>
