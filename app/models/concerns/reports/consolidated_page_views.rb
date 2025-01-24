@@ -4,21 +4,20 @@ module Reports::ConsolidatedPageViews
   extend ActiveSupport::Concern
 
   class_methods do
+    # NOTE: This report is superseded by "SiteTraffic". Eventually once
+    # use_legacy_pageviews is always false or no longer needed, and users
+    # no longer rely on the data in this old report in the transition period,
+    # we can delete this.
     def report_consolidated_page_views(report)
       filters = %w[page_view_logged_in page_view_anon page_view_crawler]
 
       report.modes = [:stacked_chart]
 
-      tertiary = ColorScheme.hex_for_name("tertiary") || "0088cc"
-      danger = ColorScheme.hex_for_name("danger") || "e45735"
-
       requests =
         filters.map do |filter|
-          color = report.rgba_color(tertiary)
-
-          color = report.lighten_color(tertiary, 0.25) if filter == "page_view_anon"
-
-          color = report.rgba_color(danger, 0.75) if filter == "page_view_crawler"
+          color = report.colors[:turquoise]
+          color = report.colors[:lime] if filter == "page_view_anon"
+          color = report.colors[:purple] if filter == "page_view_crawler"
 
           {
             req: filter,

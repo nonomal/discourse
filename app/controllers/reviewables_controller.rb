@@ -8,6 +8,10 @@ class ReviewablesController < ApplicationController
   before_action :version_required, only: %i[update perform]
   before_action :ensure_can_see, except: [:destroy]
 
+  around_action :with_deleted_content,
+                only: %i[index show],
+                if: ->(controller) { controller.guardian.is_staff? }
+
   def index
     offset = params[:offset].to_i
 
@@ -16,7 +20,7 @@ class ReviewablesController < ApplicationController
     end
 
     status = (params[:status] || "pending").to_sym
-    raise Discourse::InvalidParameters.new(:status) unless allowed_statuses.include?(status)
+    raise Discourse::InvalidParameters.new(:status) if allowed_statuses.exclude?(status)
 
     topic_id = params[:topic_id] ? params[:topic_id].to_i : nil
     category_id = params[:category_id] ? params[:category_id].to_i : nil
@@ -32,9 +36,17 @@ class ReviewablesController < ApplicationController
       additional_filters: additional_filters.reject { |_, v| v.blank? },
     }
 
-    %i[priority username reviewed_by from_date to_date type sort_order].each do |filter_key|
-      filters[filter_key] = params[filter_key]
-    end
+    %i[
+      priority
+      username
+      reviewed_by
+      from_date
+      to_date
+      type
+      sort_order
+      flagged_by
+      score_type
+    ].each { |filter_key| filters[filter_key] = params[filter_key] }
 
     total_rows = Reviewable.list_for(current_user, **filters).count
     reviewables =
@@ -62,6 +74,11 @@ class ReviewablesController < ApplicationController
           total_rows_reviewables: total_rows,
           types: meta_types,
           reviewable_types: Reviewable.types,
+          score_types:
+            ReviewableScore
+              .types
+              .filter { |k, v| k != :notify_user }
+              .map { |k, v| { id: v, name: ReviewableScore.type_title(k) } },
           reviewable_count: current_user.reviewable_count,
           unseen_reviewable_count: Reviewable.unseen_reviewable_count(current_user),
         ),
@@ -155,10 +172,25 @@ class ReviewablesController < ApplicationController
   end
 
   def destroy
-    reviewable = Reviewable.find_by(id: params[:reviewable_id], created_by: current_user)
+    user =
+      if is_api?
+        if @guardian.is_admin?
+          fetch_user_from_params
+        else
+          raise Discourse::InvalidAccess
+        end
+      else
+        current_user
+      end
+
+    reviewable =
+      Reviewable.find_by_flagger_or_queued_post_creator(
+        id: params[:reviewable_id],
+        user_id: user.id,
+      )
     raise Discourse::NotFound.new if reviewable.blank?
 
-    reviewable.perform(current_user, :delete)
+    reviewable.perform(current_user, :delete, { guardian: @guardian })
 
     render json: success_json
   end
@@ -170,7 +202,7 @@ class ReviewablesController < ApplicationController
     end
 
     editable = reviewable.editable_for(guardian)
-    raise Discourse::InvalidAccess.new unless editable.present?
+    raise Discourse::InvalidAccess.new if editable.blank?
 
     # Validate parameters are all editable
     edit_params = params[:reviewable] || {}
@@ -207,11 +239,8 @@ class ReviewablesController < ApplicationController
         return render_json_error(error)
       end
 
-      if reviewable.type == "ReviewableUser"
-        args.merge!(
-          reject_reason: params[:reject_reason],
-          send_email: params[:send_email] != "false",
-        )
+      if reviewable.type_class.respond_to?(:additional_args)
+        args.merge!(reviewable.type_class.additional_args(params) || {})
       end
 
       plugin_params =
@@ -298,5 +327,9 @@ class ReviewablesController < ApplicationController
 
   def ensure_can_see
     Guardian.new(current_user).ensure_can_see_review_queue!
+  end
+
+  def with_deleted_content
+    Post.unscoped { Topic.unscoped { PostAction.unscoped { yield } } }
   end
 end

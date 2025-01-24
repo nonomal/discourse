@@ -2,42 +2,69 @@
 
 module Chat
   class MessageSerializer < ::ApplicationSerializer
-    attributes :id,
-               :message,
-               :cooked,
-               :created_at,
-               :excerpt,
-               :deleted_at,
-               :deleted_by_id,
-               :reviewable_id,
-               :user_flag_status,
-               :edited,
-               :reactions,
-               :bookmark,
-               :available_flags,
-               :thread_id,
-               :chat_channel_id
+    BASIC_ATTRIBUTES = %i[
+      id
+      message
+      cooked
+      created_at
+      excerpt
+      deleted_at
+      deleted_by_id
+      thread_id
+      chat_channel_id
+      streaming
+    ]
+    attributes(
+      *(
+        BASIC_ATTRIBUTES +
+          %i[
+            user
+            mentioned_users
+            reactions
+            bookmark
+            available_flags
+            user_flag_status
+            reviewable_id
+            edited
+            thread
+            blocks
+          ]
+      ),
+    )
 
-    has_one :user, serializer: Chat::MessageUserSerializer, embed: :objects
     has_one :chat_webhook_event, serializer: Chat::WebhookEventSerializer, embed: :objects
     has_one :in_reply_to, serializer: Chat::InReplyToSerializer, embed: :objects
     has_many :uploads, serializer: ::UploadSerializer, embed: :objects
+
+    def mentioned_users
+      object
+        .user_mentions
+        .includes(user: :user_option)
+        .limit(SiteSetting.max_mentions_per_chat_message)
+        .map(&:user)
+        .compact
+        .sort_by(&:id)
+        .map { |user| BasicUserSerializer.new(user, root: false, include_status: true) }
+        .as_json
+    end
 
     def channel
       @channel ||= @options.dig(:chat_channel) || object.chat_channel
     end
 
     def user
-      object.user || Chat::DeletedUser.new
+      user = object.user || Chat::NullUser.new
+      MessageUserSerializer.new(user, root: false, include_status: true).as_json
     end
 
     def excerpt
-      WordWatcher.censor(object.excerpt)
+      object.excerpt || object.build_excerpt
     end
 
     def reactions
       object
         .reactions
+        .includes(user: :user_option)
         .group_by(&:emoji)
         .map do |emoji, reactions|
           next unless Emoji.exists?(emoji)
@@ -91,8 +118,12 @@ module Chat
       object.revisions.any?
     end
 
+    def created_at
+      object.created_at.iso8601
+    end
+
     def deleted_at
-      object.user ? object.deleted_at : Time.zone.now
+      object.user ? object.deleted_at.iso8601 : Time.zone.now
     end
 
     def deleted_by_id
@@ -133,6 +164,15 @@ module Chat
       user_flag_status.present?
     end
 
+    def blocks
+      ActiveModel::ArraySerializer.new(
+        object.blocks || [],
+        each_serializer: Chat::BlockSerializer,
+        scope:,
+        root: false,
+      ).as_json
+    end
+
     def available_flags
       return [] if !scope.can_flag_chat_message?(object)
       return [] if reviewable_id.present? && user_flag_status == ReviewableScore.statuses[:pending]
@@ -142,7 +182,7 @@ module Chat
 
         if sym == :notify_user &&
              (
-               scope.current_user == user || user.bot? ||
+               scope.current_user == user || object.user.bot? ||
                  !scope.current_user.in_any_groups?(SiteSetting.personal_message_enabled_groups_map)
              )
           next
@@ -150,6 +190,26 @@ module Chat
 
         sym
       end
+    end
+
+    def include_thread_id?
+      channel.threading_enabled || object.thread&.force
+    end
+
+    def include_thread?
+      include_thread_id? && object.thread_om? && object.thread.present?
+    end
+
+    def thread
+      Chat::ThreadSerializer.new(
+        object.thread,
+        scope: scope,
+        membership: @options[:thread_memberships]&.find { |m| m.thread_id == object.thread&.id },
+        participants: @options[:thread_participants]&.dig(object.thread&.id),
+        include_thread_preview: true,
+        include_thread_original_message: @options[:include_thread_original_message],
+        root: false,
+      )
     end
   end
 end

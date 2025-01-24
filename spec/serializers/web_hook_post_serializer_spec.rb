@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe WebHookPostSerializer do
-  fab!(:admin) { Fabricate(:admin) }
-  fab!(:post) { Fabricate(:post) }
+  fab!(:admin)
+  fab!(:post)
 
   def serialized_for_user(u)
     WebHookPostSerializer.new(post, scope: Guardian.new(u), root: false).as_json
@@ -18,6 +18,7 @@ RSpec.describe WebHookPostSerializer do
       :cooked,
       :post_number,
       :post_type,
+      :posts_count,
       :updated_at,
       :reply_count,
       :reply_to_post_number,
@@ -32,6 +33,7 @@ RSpec.describe WebHookPostSerializer do
       :display_username,
       :primary_group_name,
       :flair_name,
+      :flair_group_id,
       :version,
       :user_title,
       :bookmarked,
@@ -49,6 +51,7 @@ RSpec.describe WebHookPostSerializer do
       :reviewable_id,
       :reviewable_score_count,
       :reviewable_score_pending_count,
+      :post_url,
       :topic_posts_count,
       :topic_filtered_posts_count,
       :topic_archetype,

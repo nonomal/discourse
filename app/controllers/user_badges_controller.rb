@@ -27,9 +27,8 @@ class UserBadgesController < ApplicationController
       grant_count = badge.user_badges.where(user_id: user_id).count
     end
 
-    if offset = params[:offset]
-      user_badges = user_badges.offset(offset.to_i)
-    end
+    offset = fetch_int_from_params(:offset, default: 0)
+    user_badges = user_badges.offset(offset) if offset > 0
 
     user_badges_topic_ids = user_badges.map { |user_badge| user_badge.post&.topic_id }.compact
 
@@ -104,7 +103,14 @@ class UserBadgesController < ApplicationController
       end
     end
 
-    user_badge = BadgeGranter.grant(badge, user, granted_by: current_user, post_id: post_id)
+    grant_opts_from_params =
+      DiscoursePluginRegistry.apply_modifier(
+        :user_badges_badge_grant_opts,
+        { granted_by: current_user, post_id: post_id },
+        { param: params },
+      )
+
+    user_badge = BadgeGranter.grant(badge, user, grant_opts_from_params)
 
     render_serialized(user_badge, DetailedUserBadgeSerializer, root: "user_badge")
   end
@@ -138,7 +144,7 @@ class UserBadgesController < ApplicationController
     UserBadge.where(user_id: user_badge.user_id, badge_id: user_badge.badge_id).update_all(
       is_favorite: !user_badge.is_favorite,
     )
-    UserBadge.update_featured_ranks!(user_badge.user_id)
+    UserBadge.update_featured_ranks!([user_badge.user_id])
   end
 
   private

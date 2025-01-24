@@ -1,27 +1,33 @@
 import Component from "@ember/component";
-import { bind, observes } from "discourse-common/utils/decorators";
 import { action } from "@ember/object";
-import { cancel, throttle } from "@ember/runloop";
-import { inject as service } from "@ember/service";
+import { cancel, next, throttle } from "@ember/runloop";
+import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
+import { tagName } from "@ember-decorators/component";
+import { observes } from "@ember-decorators/object";
+import { bind } from "discourse/lib/decorators";
+import getURL from "discourse/lib/get-url";
+import DiscourseURL from "discourse/lib/url";
 import { escapeExpression } from "discourse/lib/utilities";
 
-export default Component.extend({
-  tagName: "",
-  chat: service(),
-  router: service(),
-  chatDrawerSize: service(),
-  chatChannelsManager: service(),
-  chatStateManager: service(),
-  chatDrawerRouter: service(),
-  loading: false,
-  sizeTimer: null,
-  rafTimer: null,
-  hasUnreadMessages: false,
-  drawerStyle: null,
+@tagName("")
+export default class ChatDrawer extends Component {
+  @service chat;
+  @service router;
+  @service chatDrawerSize;
+  @service chatChannelsManager;
+  @service chatStateManager;
+  @service chatDrawerRouter;
+
+  loading = false;
+  sizeTimer = null;
+  rafTimer = null;
+  hasUnreadMessages = false;
+  drawerStyle = null;
 
   didInsertElement() {
-    this._super(...arguments);
+    super.didInsertElement(...arguments);
+
     if (!this.chat.userCanChat) {
       return;
     }
@@ -42,10 +48,11 @@ export default Component.extend({
     this.appEvents.on("composer:resize-ended", this, "_clearDynamicCheckSize");
 
     this.computeDrawerStyle();
-  },
+  }
 
   willDestroyElement() {
-    this._super(...arguments);
+    super.willDestroyElement(...arguments);
+
     if (!this.chat.userCanChat) {
       return;
     }
@@ -77,19 +84,19 @@ export default Component.extend({
     if (this.rafTimer) {
       window.cancelAnimationFrame(this.rafTimer);
     }
-  },
+  }
 
   @observes("chatStateManager.isDrawerActive")
   _fireHiddenAppEvents() {
     this.appEvents.trigger("chat:rerender-header");
-  },
+  }
 
   computeDrawerStyle() {
     const { width, height } = this.chatDrawerSize.size;
     let style = `width: ${escapeExpression((width || "0").toString())}px;`;
     style += `height: ${escapeExpression((height || "0").toString())}px;`;
     this.set("drawerStyle", htmlSafe(style));
-  },
+  }
 
   get drawerActions() {
     return {
@@ -97,7 +104,7 @@ export default Component.extend({
       close: this.close,
       toggleExpand: this.toggleExpand,
     };
-  },
+  }
 
   @bind
   _dynamicCheckSize() {
@@ -113,15 +120,17 @@ export default Component.extend({
       this.rafTimer = null;
       this._performCheckSize();
     });
-  },
+  }
 
   _startDynamicCheckSize() {
     if (!this.chatStateManager.isDrawerActive) {
       return;
     }
 
-    document.querySelector(".chat-drawer").classList.add("clear-transitions");
-  },
+    document
+      .querySelector(".chat-drawer-outlet-container")
+      .classList.add("clear-transitions");
+  }
 
   _clearDynamicCheckSize() {
     if (!this.chatStateManager.isDrawerActive) {
@@ -129,15 +138,15 @@ export default Component.extend({
     }
 
     document
-      .querySelector(".chat-drawer")
+      .querySelector(".chat-drawer-outlet-container")
       .classList.remove("clear-transitions");
     this._checkSize();
-  },
+  }
 
   @bind
   _checkSize() {
     this.sizeTimer = throttle(this, this._performCheckSize, 150);
-  },
+  }
 
   _performCheckSize() {
     if (this.isDestroying || this.isDestroyed) {
@@ -161,17 +170,17 @@ export default Component.extend({
         ? minRightMargin
         : Math.max(minRightMargin, composer.offsetLeft)) + "px"
     );
-  },
+  }
 
   @action
   openURL(url = null) {
     this.chat.activeChannel = null;
-    this.chatStateManager.didOpenDrawer(url);
     this.chatDrawerRouter.stateFor(this._routeFromURL(url));
-  },
+    this.chatStateManager.didOpenDrawer(url);
+  }
 
   _routeFromURL(url) {
-    let route = this.router.recognize(url || "/");
+    let route = this.router.recognize(getURL(url || "/"));
 
     // ember might recognize the index subroute
     if (route.localName === "index") {
@@ -179,16 +188,18 @@ export default Component.extend({
     }
 
     return route;
-  },
+  }
 
   @action
-  openInFullPage() {
+  async openInFullPage() {
     this.chatStateManager.storeAppURL();
     this.chatStateManager.prefersFullPage();
     this.chat.activeChannel = null;
 
-    return this.router.transitionTo(this.chatStateManager.lastKnownChatURL);
-  },
+    await new Promise((resolve) => next(resolve));
+
+    return DiscourseURL.routeTo(this.chatStateManager.lastKnownChatURL);
+  }
 
   @action
   toggleExpand() {
@@ -198,17 +209,17 @@ export default Component.extend({
       "chat:toggle-expand",
       this.chatStateManager.isDrawerExpanded
     );
-  },
+  }
 
   @action
   close() {
     this.computeDrawerStyle();
     this.chatStateManager.didCloseDrawer();
     this.chat.activeChannel = null;
-  },
+  }
 
   @action
   didResize(element, { width, height }) {
     this.chatDrawerSize.size = { width, height };
-  },
-});
+  }
+}

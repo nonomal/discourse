@@ -1,17 +1,17 @@
-import { classNameBindings, classNames } from "@ember-decorators/component";
-import { alias, and, equal, notEmpty, or } from "@ember/object/computed";
-import EmberObject, { action, computed } from "@ember/object";
-import Report, { DAILY_LIMIT_DAYS, SCHEMA_VERSION } from "admin/models/report";
 import Component from "@ember/component";
-import I18n from "I18n";
-import ReportLoader from "discourse/lib/reports-loader";
-import discourseComputed from "discourse-common/utils/decorators";
-import { exportEntity } from "discourse/lib/export-csv";
-import { isPresent } from "@ember/utils";
-import { isTesting } from "discourse-common/config/environment";
-import { makeArray } from "discourse-common/lib/helpers";
+import EmberObject, { action, computed } from "@ember/object";
+import { alias, and, equal, notEmpty, or } from "@ember/object/computed";
 import { next } from "@ember/runloop";
+import { isPresent } from "@ember/utils";
+import { classNameBindings, classNames } from "@ember-decorators/component";
+import discourseComputed from "discourse/lib/decorators";
+import { isTesting } from "discourse/lib/environment";
+import { exportEntity } from "discourse/lib/export-csv";
 import { outputExportResult } from "discourse/lib/export-result";
+import { makeArray } from "discourse/lib/helpers";
+import ReportLoader from "discourse/lib/reports-loader";
+import { i18n } from "discourse-i18n";
+import Report, { DAILY_LIMIT_DAYS, SCHEMA_VERSION } from "admin/models/report";
 
 const TABLE_OPTIONS = {
   perPage: 8,
@@ -32,7 +32,7 @@ const CHART_OPTIONS = {};
 @classNames("admin-report")
 export default class AdminReport extends Component {
   isEnabled = true;
-  disabledLabel = I18n.t("admin.dashboard.disabled");
+  disabledLabel = i18n("admin.dashboard.disabled");
   isLoading = false;
   rateLimitationString = null;
   dataSourceName = null;
@@ -40,7 +40,6 @@ export default class AdminReport extends Component {
   model = null;
   reportOptions = null;
   forcedModes = null;
-  showAllReportsLink = false;
   filters = null;
   showTrend = false;
   showHeader = true;
@@ -220,11 +219,11 @@ export default class AdminReport extends Component {
 
   @action
   refreshReport(options = {}) {
-    if (!this.attrs.onRefresh) {
+    if (!this.onRefresh) {
       return;
     }
 
-    this.attrs.onRefresh({
+    this.onRefresh({
       type: this.get("model.type"),
       mode: this.currentMode,
       chartGrouping: options.chartGrouping,
@@ -336,7 +335,7 @@ export default class AdminReport extends Component {
         if (response === 429) {
           this.set(
             "rateLimitationString",
-            I18n.t("admin.dashboard.too_many_requests")
+            i18n("admin.dashboard.too_many_requests")
           );
         } else if (response === 500) {
           this.set("model.error", "exception");
@@ -391,6 +390,8 @@ export default class AdminReport extends Component {
             Report.groupingForDatapoints(report.chartData.length),
         })
       );
+    } else if (mode === "stacked-chart" || mode === "stacked_chart") {
+      return this.get("reportOptions.stackedChart") || {};
     }
   }
 

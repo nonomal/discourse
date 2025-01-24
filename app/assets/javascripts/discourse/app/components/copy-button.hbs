@@ -1,5 +1,7 @@
 <DButton
-  @class={{this.copyClass}}
   @icon={{this.copyIcon}}
-  @action={{action "copy"}}
+  @action={{this.copy}}
+  class="copy-button {{this.copyClass}}"
+  @ariaLabel={{this.ariaLabel}}
+  @translatedLabel={{this.copyTranslatedLabel}}
 />

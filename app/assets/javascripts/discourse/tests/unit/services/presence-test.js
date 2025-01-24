@@ -1,14 +1,14 @@
+import { getOwner } from "@ember/owner";
+import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
+import sinon from "sinon";
+import { setTestPresence } from "discourse/lib/user-presence";
+import { PresenceChannelNotFound } from "discourse/services/presence";
+import pretender, { response } from "discourse/tests/helpers/create-pretender";
 import {
   currentUser,
   publishToMessageBus,
 } from "discourse/tests/helpers/qunit-helpers";
-import { module, test } from "qunit";
-import { PresenceChannelNotFound } from "discourse/services/presence";
-import { setTestPresence } from "discourse/lib/user-presence";
-import sinon from "sinon";
-import { setupTest } from "ember-qunit";
-import { getOwner } from "discourse-common/lib/get-owner";
-import pretender, { response } from "discourse/tests/helpers/create-pretender";
 
 function usersFixture() {
   return [
@@ -37,11 +37,10 @@ module("Unit | Service | presence | subscribing", function (hooks) {
   setupTest(hooks);
 
   hooks.beforeEach(function () {
-    pretender.get("/presence/get", async (request) => {
-      const channels = request.queryParams.channels;
+    pretender.get("/presence/get", (request) => {
       const result = {};
 
-      channels.forEach((c) => {
+      request.queryParams.channels.forEach((c) => {
         if (c.startsWith("/test/")) {
           result[c] = {
             count: 3,
@@ -169,7 +168,7 @@ module("Unit | Service | presence | subscribing", function (hooks) {
     await channel.subscribe();
 
     assert.strictEqual(channel.count, 3, "has the correct count");
-    assert.strictEqual(channel.countOnly, true, "identifies as countOnly");
+    assert.true(channel.countOnly, "identifies as countOnly");
     assert.strictEqual(channel.users, null, "has null users list");
 
     await publishToMessageBus(
@@ -215,8 +214,8 @@ module("Unit | Service | presence | subscribing", function (hooks) {
 
     await channelDup.subscribe();
     assert.true(channelDup.subscribed, "channelDup can subscribe");
-    assert.ok(
-      channelDup._presenceState,
+    assert.true(
+      !!channelDup._presenceState,
       "channelDup has a valid internal state"
     );
     assert.strictEqual(
@@ -267,11 +266,7 @@ module("Unit | Service | presence | entering and leaving", function (hooks) {
       const result = {};
       const channelsRequested = body.getAll("present_channels[]");
       channelsRequested.forEach((c) => {
-        if (c.startsWith("/test/")) {
-          result[c] = true;
-        } else {
-          result[c] = false;
-        }
+        result[c] = c.startsWith("/test/");
       });
 
       return response(result);
@@ -426,6 +421,43 @@ module("Unit | Service | presence | entering and leaving", function (hooks) {
     );
   });
 
+  test("updates the server presence after going idle", async function (assert) {
+    const presenceService = getOwner(this).lookup("service:presence");
+    presenceService.currentUser = currentUser();
+    const channel = presenceService.getChannel("/test/ch1");
+
+    await channel.enter();
+    requests.pop(); // Throw away this request
+
+    setTestPresence(false);
+
+    await presenceService._updateServer();
+    assert.strictEqual(
+      requests.length,
+      1,
+      "updated the server after going idle"
+    );
+    let request = requests.pop();
+    assert.true(
+      request.getAll("leave_channels[]").includes("/test/ch1"),
+      "left ch1"
+    );
+
+    // Go back online
+    setTestPresence(true);
+    await presenceService._updateServer();
+    assert.strictEqual(
+      requests.length,
+      1,
+      "updated the server after going back online"
+    );
+    request = requests.pop();
+    assert.true(
+      request.getAll("present_channels[]").includes("/test/ch1"),
+      "rejoined ch1"
+    );
+  });
+
   test("handles the onlyWhileActive flag", async function (assert) {
     const presenceService = getOwner(this).lookup("service:presence");
     presenceService.currentUser = currentUser();
@@ -478,23 +510,27 @@ module("Unit | Service | presence | entering and leaving", function (hooks) {
     );
   });
 
-  test("don't spam requests when server returns 429", function (assert) {
-    const done = assert.async();
+  test("don't spam requests when server returns 429", async function (assert) {
     let requestCount = 0;
-    pretender.post("/presence/update", async () => {
+    pretender.post("/presence/update", () => {
       requestCount++;
-      return response(429, { extras: { wait_seconds: 2 } });
+      if (requestCount === 1) {
+        return response(429, { extras: { wait_seconds: 2 } });
+      } else {
+        return response({});
+      }
     });
 
     const presenceService = getOwner(this).lookup("service:presence");
     presenceService.currentUser = currentUser();
     const channel = presenceService.getChannel("/test/ch1");
 
-    setTimeout(function () {
+    setTimeout(() => {
       assert.strictEqual(requestCount, 1);
-      done();
+      assert.step("request");
     }, 500);
 
-    channel.enter();
+    await channel.enter();
+    assert.verifySteps(["request"]);
   });
 });

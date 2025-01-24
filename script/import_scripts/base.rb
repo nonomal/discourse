@@ -84,7 +84,7 @@ class ImportScripts::Base
       clean_up_inactive_users_after_days: 0,
       clean_up_unused_staged_users_after_days: 0,
       clean_up_uploads: false,
-      clean_orphan_uploads_grace_period_hours: 1800,
+      clean_orphan_uploads_grace_period_hours: 168,
     }
   end
 
@@ -444,7 +444,7 @@ class ImportScripts::Base
       else
         # Basic massaging on the category name
         params[:name] = "Blank" if params[:name].blank?
-        params[:name].strip!
+        params[:name] = params[:name].strip
         params[:name] = params[:name][0..49]
 
         # make sure categories don't go more than 2 levels deep
@@ -586,7 +586,7 @@ class ImportScripts::Base
     [created, skipped]
   end
 
-  STAFF_GUARDIAN ||= Guardian.new(Discourse.system_user)
+  STAFF_GUARDIAN = Guardian.new(Discourse.system_user)
 
   def create_post(opts, import_id)
     user = User.find(opts[:user_id])

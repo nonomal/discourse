@@ -9,6 +9,13 @@ RSpec.describe BackupRestore::Backuper do
       expect(backuper.send(:get_parameterized_title)).to eq("discourse")
     end
 
+    it "truncates the title to 64 chars" do
+      SiteSetting.title = "This is th title of a very long site that is going to be truncated"
+      backuper = BackupRestore::Backuper.new(Discourse.system_user.id)
+
+      expect(backuper.send(:get_parameterized_title).length).to eq(64)
+    end
+
     it "returns a valid parameterized site title" do
       SiteSetting.title = "Coding Horror"
       backuper = BackupRestore::Backuper.new(Discourse.system_user.id)
@@ -81,20 +88,10 @@ RSpec.describe BackupRestore::Backuper do
 
     before { backup.stubs(:success).returns(success) }
 
-    context "when the result isn't successful" do
-      let(:success) { false }
-
-      it "doesn't refresh disk stats" do
-        store.expects(:reset_cache).never
-        run
-      end
-    end
-
     context "when the result is successful" do
       let(:success) { true }
-
       it "refreshes disk stats" do
-        store.expects(:reset_cache)
+        store.expects(:reset_cache).at_least_once
         run
       end
     end

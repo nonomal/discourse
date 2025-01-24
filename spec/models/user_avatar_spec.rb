@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 RSpec.describe UserAvatar do
-  fab!(:user) { Fabricate(:user) }
+  fab!(:user)
   let(:avatar) { user.create_user_avatar! }
 
   describe "#update_gravatar!" do
@@ -24,7 +24,7 @@ RSpec.describe UserAvatar do
       after { temp.unlink }
 
       it "can update gravatars" do
-        freeze_time Time.now
+        freeze_time
 
         expect { avatar.update_gravatar! }.to change { Upload.count }.by(1)
         expect(avatar.gravatar_upload).to eq(Upload.last)
@@ -76,7 +76,7 @@ RSpec.describe UserAvatar do
 
     describe "when failing" do
       it "always update 'last_gravatar_download_attempt'" do
-        freeze_time Time.now
+        freeze_time
 
         FileHelper.expects(:download).raises(SocketError)
 
@@ -91,11 +91,11 @@ RSpec.describe UserAvatar do
     describe "404 should be silent, nothing to do really" do
       it "does nothing when avatar is 404" do
         SecureRandom.stubs(:urlsafe_base64).returns("5555")
-        freeze_time Time.now
+        freeze_time
 
         stub_request(
           :get,
-          "https://www.gravatar.com/avatar/#{avatar.user.email_hash}.png?d=404&reset_cache=5555&s=360",
+          "https://www.gravatar.com/avatar/#{avatar.user.email_hash}.png?d=404&reset_cache=5555&s=#{Discourse.avatar_sizes.max}",
         ).to_return(status: 404, body: "", headers: {})
 
         expect do avatar.update_gravatar! end.to_not change { Upload.count }
@@ -175,15 +175,48 @@ RSpec.describe UserAvatar do
         expect(user.user_avatar.custom_upload_id).to eq(nil)
       end
     end
+
+    it "doesn't error out if the remote request fails" do
+      FileHelper.stubs(:download).raises(FinalDestination::SSRFDetector::LookupFailedError.new)
+
+      expect { UserAvatar.import_url_for_user(anything, user) }.not_to raise_error
+    end
   end
 
   describe "ensure_consistency!" do
+    it "cleans up incorrectly sized avatars" do
+      SiteSetting.avatar_sizes = "10|20|30"
+
+      upload = Fabricate(:upload)
+      user_avatar = Fabricate(:user).user_avatar
+      user_avatar.update_columns(custom_upload_id: upload.id)
+
+      Fabricate(:optimized_image, upload: upload, width: 10, height: 10)
+      Fabricate(:optimized_image, upload: upload, width: 15, height: 15)
+      Fabricate(:optimized_image, upload: upload, width: 20, height: 20)
+
+      UserAvatar.ensure_consistency!
+
+      expect(OptimizedImage.where(upload_id: upload.id).pluck(:width, :height).sort).to eq(
+        [[10, 10], [20, 20]],
+      )
+
+      # will not clean up if referenced
+      Fabricate(:optimized_image, upload: upload, width: 15, height: 15)
+      UploadReference.create!(upload: upload, target: Fabricate(:post))
+
+      UserAvatar.ensure_consistency!
+
+      expect(OptimizedImage.where(upload_id: upload.id).pluck(:width, :height).sort).to eq(
+        [[10, 10], [15, 15], [20, 20]],
+      )
+    end
+
     it "will clean up dangling avatars" do
       upload1 = Fabricate(:upload)
       upload2 = Fabricate(:upload)
 
       user_avatar = Fabricate(:user).user_avatar
-
       user_avatar.update_columns(gravatar_upload_id: upload1.id, custom_upload_id: upload2.id)
 
       upload1.destroy!
@@ -200,6 +233,17 @@ RSpec.describe UserAvatar do
       user_avatar.reload
       expect(user_avatar.gravatar_upload_id).to eq(nil)
       expect(user_avatar.custom_upload_id).to eq(nil)
+    end
+
+    it "deletes avatars without users and does not remove avatars with users" do
+      user_avatar_with_user = Fabricate(:user_avatar)
+      user_avatar_without_user = Fabricate(:user_avatar)
+      user_avatar_without_user.user.delete
+
+      UserAvatar.ensure_consistency!
+
+      expect(UserAvatar.exists?(user_avatar_with_user.id)).to eq true
+      expect(UserAvatar.exists?(user_avatar_without_user.id)).to eq false
     end
   end
 end

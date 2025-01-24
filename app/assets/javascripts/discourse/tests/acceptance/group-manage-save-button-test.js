@@ -1,7 +1,7 @@
-import { acceptance, exists } from "discourse/tests/helpers/qunit-helpers";
-import selectKit from "discourse/tests/helpers/select-kit-helper";
 import { click, visit } from "@ember/test-helpers";
 import { test } from "qunit";
+import { acceptance } from "discourse/tests/helpers/qunit-helpers";
+import selectKit from "discourse/tests/helpers/select-kit-helper";
 
 acceptance("Managing Group - Save Button", function (needs) {
   needs.user();
@@ -19,11 +19,11 @@ acceptance("Managing Group - Save Button", function (needs) {
     await visibilitySelector.expand();
     await visibilitySelector.selectRowByValue("1");
 
-    assert.ok(exists(".alert-private-group-name"), "alert is shown");
+    assert.dom(".alert-private-group-name").exists("alert is shown");
 
     await visibilitySelector.expand();
     await visibilitySelector.selectRowByValue("0");
 
-    assert.notOk(exists(".alert-private-group-name"), "alert is hidden");
+    assert.dom(".alert-private-group-name").doesNotExist("alert is hidden");
   });
 });

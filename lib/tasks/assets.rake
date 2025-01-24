@@ -1,41 +1,67 @@
 # frozen_string_literal: true
 
-task "assets:precompile:before" do
-  require "uglifier"
-  require "open3"
-
-  unless %w[profile production].include? Rails.env
+task "assets:precompile:prereqs" do
+  if %w[profile production].exclude? Rails.env
     raise "rake assets:precompile should only be run in RAILS_ENV=production, you are risking unminified assets"
   end
+end
 
-  if ENV["EMBER_CLI_COMPILE_DONE"] != "1"
-    compile_command = "yarn --cwd app/assets/javascripts/discourse run ember build -prod"
+task "assets:precompile:build" do
+  if ENV["SKIP_EMBER_CLI_COMPILE"] != "1"
+    ember_version = ENV["EMBER_VERSION"] || "5"
 
-    if check_node_heap_size_limit < 1024
-      STDERR.puts "Detected low Node.js heap_size_limit. Using --max-old-space-size=1024."
-      compile_command = "NODE_OPTIONS='--max-old-space-size=1024' #{compile_command}"
+    raise "Unknown ember version '#{ember_version}'" if !%w[5].include?(ember_version)
+
+    # If `JOBS` env is not set, `thread-loader` defaults to the number of CPUs - 1 on the machine but we want to cap it
+    # at 2 because benchmarking has shown that anything beyond 2 does not improve build times or the increase is marginal.
+    # Therefore, we cap it so that we don't spawn more processes than necessary.
+    jobs_env_count = (2 if !ENV["JOBS"].present? && Etc.nprocessors > 2)
+
+    compile_command = "CI=1 pnpm --dir=app/assets/javascripts/discourse ember build"
+
+    heap_size_limit = check_node_heap_size_limit
+
+    if heap_size_limit < 2048
+      STDERR.puts "Node.js heap_size_limit (#{heap_size_limit}) is less than 2048MB. Setting --max-old-space-size=2048 and CHEAP_SOURCE_MAPS=1"
+      jobs_env_count = 0
+
+      compile_command =
+        "CI=1 NODE_OPTIONS='--max-old-space-size=2048' CHEAP_SOURCE_MAPS=1 #{compile_command}"
     end
 
+    ember_env = ENV["EMBER_ENV"] || "production"
+    compile_command = "#{compile_command} -prod" if ember_env == "production"
+    compile_command = "JOBS=#{jobs_env_count} #{compile_command}" if jobs_env_count
+
+    only_ember_precompile_build_remaining = (ARGV.last == "assets:precompile:build")
     only_assets_precompile_remaining = (ARGV.last == "assets:precompile")
 
-    if only_assets_precompile_remaining
-      # Using exec to free up Rails app memory during ember build
-      exec "#{compile_command} && EMBER_CLI_COMPILE_DONE=1 bin/rake assets:precompile"
+    # Using exec to free up Rails app memory during ember build
+    if only_ember_precompile_build_remaining
+      exec "#{compile_command}"
+    elsif only_assets_precompile_remaining
+      exec "#{compile_command} && SKIP_EMBER_CLI_COMPILE=1 bin/rake assets:precompile"
     else
       system compile_command, exception: true
+      EmberCli.clear_cache!
     end
   end
+end
+
+task "assets:precompile:before": %w[
+       environment
+       assets:precompile:prereqs
+       assets:precompile:build
+     ] do
+  require "uglifier"
+  require "open3"
 
   # Ensure we ALWAYS do a clean build
   # We use many .erbs that get out of date quickly, especially with plugins
   STDERR.puts "Purging temp files"
   `rm -fr #{Rails.root}/tmp/cache`
 
-  # Ensure we clear emoji cache before pretty-text/emoji/data.js.es6.erb
-  # is recompiled
-  Emoji.clear_cache
-
-  $node_compress = `which terser`.present? && !ENV["SKIP_NODE_UGLIFY"]
+  $node_compress = !ENV["SKIP_NODE_UGLIFY"]
 
   unless ENV["USE_SPROCKETS_UGLIFY"]
     $bypass_sprockets_uglify = true
@@ -51,15 +77,22 @@ task "assets:precompile:before" do
 
   require "sprockets"
   require "digest/sha1"
-
-  # Add ember cli chunks
-  Rails.configuration.assets.precompile.push(
-    *EmberCli.script_chunks.values.flatten.flat_map { |name| ["#{name}.js", "#{name}.map"] },
-  )
 end
 
 task "assets:precompile:css" => "environment" do
-  if ENV["DONT_PRECOMPILE_CSS"] == "1"
+  class Sprockets::Manifest
+    def reload
+      @filename = find_directory_manifest(@directory)
+      @data = json_decode(File.read(@filename))
+    end
+  end
+
+  # cause on boot we loaded a blank manifest,
+  # we need to know where all the assets are to precompile CSS
+  # cause CSS uses asset_path
+  Rails.application.assets_manifest.reload
+
+  if ENV["DONT_PRECOMPILE_CSS"] == "1" || ENV["SKIP_DB_AND_REDIS"] == "1"
     STDERR.puts "Skipping CSS precompilation, ensure CSS lives in a shared directory across hosts"
   else
     STDERR.puts "Start compiling CSS: #{Time.zone.now}"
@@ -129,7 +162,7 @@ def compress_node(from, to)
   base_source_map = assets_path + assets_additional_path
 
   cmd = <<~SH
-    terser '#{assets_path}/#{from}' -m -c -o '#{to_path}' --source-map "base='#{base_source_map}',root='#{source_map_root}',url='#{source_map_url}',includeSources=true"
+    pnpm terser '#{assets_path}/#{from}' -m -c -o '#{to_path}' --source-map "base='#{base_source_map}',root='#{source_map_root}',url='#{source_map_url}',includeSources=true"
   SH
 
   STDERR.puts cmd
@@ -168,14 +201,14 @@ def gzip(path)
 end
 
 # different brotli versions use different parameters
-def brotli_command(path, max_compress)
-  compression_quality = max_compress ? "11" : "6"
+def brotli_command(path)
+  compression_quality = ENV["DISCOURSE_ASSETS_PRECOMPILE_DEFAULT_BROTLI_QUALITY"] || "6"
   "brotli -f --quality=#{compression_quality} #{path} --output=#{path}.br"
 end
 
-def brotli(path, max_compress)
-  STDERR.puts brotli_command(path, max_compress)
-  STDERR.puts `#{brotli_command(path, max_compress)}`
+def brotli(path)
+  STDERR.puts brotli_command(path)
+  STDERR.puts `#{brotli_command(path)}`
   raise "brotli compression failed: exit code #{$?.exitstatus}" if $?.exitstatus != 0
   STDERR.puts `chmod +r #{path}.br`.strip
   raise "chmod failed: exit code #{$?.exitstatus}" if $?.exitstatus != 0
@@ -184,7 +217,7 @@ end
 def max_compress?(path, locales)
   return false if Rails.configuration.assets.skip_minification.include? path
   return false if EmberCli.is_ember_cli_asset?(path)
-  return true unless path.include? "locales/"
+  return true if path.exclude? "locales/"
 
   path_locale = path.delete_prefix("locales/").delete_suffix(".js")
   return true if locales.include? path_locale
@@ -193,22 +226,20 @@ def max_compress?(path, locales)
 end
 
 def compress(from, to)
-  if $node_compress
-    compress_node(from, to)
-  else
-    compress_ruby(from, to)
-  end
+  $node_compress ? compress_node(from, to) : compress_ruby(from, to)
 end
 
 def concurrent?
   if ENV["SPROCKETS_CONCURRENT"] == "1"
     concurrent_compressors = []
     executor = Concurrent::FixedThreadPool.new(Concurrent.processor_count)
+
     yield(
       Proc.new do |&block|
         concurrent_compressors << Concurrent::Future.execute(executor: executor) { block.call }
       end
     )
+
     concurrent_compressors.each(&:wait!)
   else
     yield(Proc.new { |&block| block.call })
@@ -226,77 +257,7 @@ def log_task_duration(task_description, &task)
   STDERR.puts
 end
 
-def geolite_dbs
-  @geolite_dbs ||= %w[GeoLite2-City GeoLite2-ASN]
-end
-
-def get_mmdb_time(root_path)
-  mmdb_time = nil
-
-  geolite_dbs.each do |name|
-    path = File.join(root_path, "#{name}.mmdb")
-    if File.exist?(path)
-      mmdb_time = File.mtime(path)
-    else
-      mmdb_time = nil
-      break
-    end
-  end
-
-  mmdb_time
-end
-
-def copy_maxmind(from_path, to_path)
-  puts "Copying MaxMindDB from #{from_path} to #{to_path}"
-
-  geolite_dbs.each do |name|
-    from = File.join(from_path, "#{name}.mmdb")
-    to = File.join(to_path, "#{name}.mmdb")
-    FileUtils.cp(from, to, preserve: true)
-  end
-end
-
-task "assets:precompile" => "assets:precompile:before" do
-  refresh_days = GlobalSetting.refresh_maxmind_db_during_precompile_days
-
-  if refresh_days.to_i > 0
-    mmdb_time = get_mmdb_time(DiscourseIpInfo.path)
-
-    backup_mmdb_time =
-      if GlobalSetting.maxmind_backup_path.present?
-        get_mmdb_time(GlobalSetting.maxmind_backup_path)
-      end
-
-    mmdb_time ||= backup_mmdb_time
-    if backup_mmdb_time && backup_mmdb_time >= mmdb_time
-      copy_maxmind(GlobalSetting.maxmind_backup_path, DiscourseIpInfo.path)
-      mmdb_time = backup_mmdb_time
-    end
-
-    if !mmdb_time || mmdb_time < refresh_days.days.ago
-      puts "Downloading MaxMindDB..."
-      mmdb_thread =
-        Thread.new do
-          name = "unknown"
-          begin
-            geolite_dbs.each do |db|
-              name = db
-              DiscourseIpInfo.mmdb_download(db)
-            end
-
-            if GlobalSetting.maxmind_backup_path.present?
-              copy_maxmind(DiscourseIpInfo.path, GlobalSetting.maxmind_backup_path)
-            end
-          rescue OpenURI::HTTPError => e
-            STDERR.puts("*" * 100)
-            STDERR.puts("MaxMindDB (#{name}) could not be downloaded: #{e}")
-            STDERR.puts("*" * 100)
-            Rails.logger.warn("MaxMindDB (#{name}) could not be downloaded: #{e}")
-          end
-        end
-    end
-  end
-
+task "assets:precompile:compress_js": "environment" do
   if $bypass_sprockets_uglify
     puts "Compressing Javascript and Generating Source Maps"
     manifest = Sprockets::Manifest.new(assets_path)
@@ -314,7 +275,14 @@ task "assets:precompile" => "assets:precompile:before" do
           .select { |k, v| k =~ /\.js\z/ }
           .each do |file, info|
             path = "#{assets_path}/#{file}"
-            _file = (d = File.dirname(file)) == "." ? "_#{file}" : "#{d}/_#{File.basename(file)}"
+            _file =
+              (
+                if (d = File.dirname(file)) == "."
+                  "_#{file}"
+                else
+                  "#{d}/_#{File.basename(file)}"
+                end
+              )
             _path = "#{assets_path}/#{_file}"
             max_compress = max_compress?(info["logical_path"], locales)
             if File.exist?(_path)
@@ -334,7 +302,7 @@ task "assets:precompile" => "assets:precompile:before" do
                   info["size"] = File.size(path)
                   info["mtime"] = File.mtime(path).iso8601
                   gzip(path)
-                  brotli(path, max_compress)
+                  brotli(path)
                 end
               end
             end
@@ -355,21 +323,18 @@ task "assets:precompile" => "assets:precompile:before" do
       end
     end
   end
-
-  mmdb_thread.join if mmdb_thread
 end
 
-Rake::Task["assets:precompile"].enhance do
-  class Sprockets::Manifest
-    def reload
-      @filename = find_directory_manifest(@directory)
-      @data = json_decode(File.read(@filename))
-    end
-  end
+task "assets:precompile:theme_transpiler": "environment" do
+  DiscourseJsProcessor::Transpiler.build_production_theme_transpiler
+end
 
-  # cause on boot we loaded a blank manifest,
-  # we need to know where all the assets are to precompile CSS
-  # cause CSS uses asset_path
-  Rails.application.assets_manifest.reload
+# Run these tasks **before** Rails' "assets:precompile" task
+task "assets:precompile": %w[assets:precompile:before assets:precompile:theme_transpiler]
+
+# Run these tasks **after** Rails' "assets:precompile" task
+Rake::Task["assets:precompile"].enhance do
+  Rake::Task["assets:precompile:compress_js"].invoke
   Rake::Task["assets:precompile:css"].invoke
+  Rake::Task["maxminddb:refresh"].invoke
 end

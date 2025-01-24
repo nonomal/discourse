@@ -1,11 +1,15 @@
 import {
-  acceptance,
-  exists,
-  publishToMessageBus,
-  query,
-} from "discourse/tests/helpers/qunit-helpers";
-import { click, fillIn, settled, visit } from "@ember/test-helpers";
+  click,
+  fillIn,
+  settled,
+  triggerEvent,
+  visit,
+} from "@ember/test-helpers";
 import { skip } from "qunit";
+import {
+  acceptance,
+  publishToMessageBus,
+} from "discourse/tests/helpers/qunit-helpers";
 import {
   baseChatPretenders,
   chatChannelPretender,
@@ -22,7 +26,7 @@ acceptance("Discourse Chat - Composer", function (needs) {
     server.get("/chat/:id/messages.json", () =>
       helper.response({ chat_messages: [], meta: {} })
     );
-    server.get("/chat/emojis.json", () =>
+    server.get("/emojis.json", () =>
       helper.response({ favorites: [{ name: "grinning" }] })
     );
     server.post("/chat/drafts", () => {
@@ -47,23 +51,19 @@ acceptance("Discourse Chat - Composer", function (needs) {
   skip("when pasting html in composer", async function (assert) {
     await visit("/chat/c/another-category/11");
 
-    const clipboardEvent = new Event("paste", { bubbles: true });
-    clipboardEvent.clipboardData = {
-      types: ["text/html"],
-      getData: (type) => {
-        if (type === "text/html") {
-          return "<a href>Foo</a>";
-        }
+    await triggerEvent(".chat-composer__input", "paste", {
+      bubbles: true,
+      clipboardData: {
+        types: ["text/html"],
+        getData: (type) => {
+          if (type === "text/html") {
+            return "<a href>Foo</a>";
+          }
+        },
       },
-    };
+    });
 
-    document
-      .querySelector(".chat-composer-input")
-      .dispatchEvent(clipboardEvent);
-
-    await settled();
-
-    assert.equal(document.querySelector(".chat-composer-input").value, "Foo");
+    assert.dom(".chat-composer__input").hasValue("Foo");
   });
 });
 
@@ -97,16 +97,15 @@ acceptance("Discourse Chat - Composer - unreliable network", function (needs) {
 
   skip("Sending a message with unreliable network", async function (assert) {
     await visit("/chat/c/-/11");
-    await fillIn(".chat-composer-input", "network-error-message");
-    await click(".send-btn");
+    await fillIn(".chat-composer__input", "network-error-message");
+    await click(".chat-composer-button.-send");
 
-    assert.ok(
-      exists(".chat-message-container[data-id='1'] .retry-staged-message-btn"),
-      "it adds a retry button"
-    );
+    assert
+      .dom(".chat-message-container[data-id='1'] .retry-staged-message-btn")
+      .exists("it adds a retry button");
 
-    await fillIn(".chat-composer-input", "network-error-message");
-    await click(".send-btn");
+    await fillIn(".chat-composer__input", "network-error-message");
+    await click(".chat-composer-button.-send");
     await publishToMessageBus(`/chat/11`, {
       type: "sent",
       staged_id: 1,
@@ -117,19 +116,13 @@ acceptance("Discourse Chat - Composer - unreliable network", function (needs) {
       },
     });
 
-    assert.notOk(
-      exists(".chat-message-container[data-id='1'] .retry-staged-message-btn"),
-      "it removes the staged message"
-    );
-    assert.ok(
-      exists(".chat-message-container[data-id='175']"),
-      "it sends the message"
-    );
-    assert.strictEqual(
-      query(".chat-composer-input").value,
-      "",
-      "it clears the input"
-    );
+    assert
+      .dom(".chat-message-container[data-id='1'] .retry-staged-message-btn")
+      .doesNotExist("it removes the staged message");
+    assert
+      .dom(".chat-message-container[data-id='175']")
+      .exists("it sends the message");
+    assert.dom(".chat-composer__input").hasNoValue("clears the input");
   });
 
   skip("Draft with unreliable network", async function (assert) {
@@ -137,9 +130,8 @@ acceptance("Discourse Chat - Composer - unreliable network", function (needs) {
     this.chatService.set("isNetworkUnreliable", true);
     await settled();
 
-    assert.ok(
-      exists(".chat-composer__unreliable-network"),
-      "it displays a network error icon"
-    );
+    assert
+      .dom(".chat-composer__unreliable-network")
+      .exists("it displays a network error icon");
   });
 });

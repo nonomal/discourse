@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "rails_helper"
-
 describe Jobs::Chat::DeleteOldMessages do
   base_date = DateTime.parse("2020-12-01 00:00 UTC")
 
@@ -79,7 +77,10 @@ describe Jobs::Chat::DeleteOldMessages do
     )
   end
 
-  before { freeze_time(base_date) }
+  before do
+    freeze_time(base_date)
+    SiteSetting.chat_enabled = true
+  end
 
   it "doesn't delete messages when settings are 0" do
     SiteSetting.chat_channel_retention_days = 0
@@ -109,6 +110,16 @@ describe Jobs::Chat::DeleteOldMessages do
       SiteSetting.chat_channel_retention_days = 800
       expect { described_class.new.execute }.not_to change { Chat::Message.in_public_channel.count }
     end
+
+    context "when chat is disabled" do
+      before { SiteSetting.chat_enabled = false }
+
+      it "does nothing" do
+        expect { described_class.new.execute }.not_to change {
+          Chat::Message.in_public_channel.count
+        }
+      end
+    end
   end
 
   describe "dm channels" do
@@ -131,6 +142,14 @@ describe Jobs::Chat::DeleteOldMessages do
     it "does nothing when no messages fall in the time range" do
       SiteSetting.chat_dm_retention_days = 800
       expect { described_class.new.execute }.not_to change { Chat::Message.in_dm_channel.count }
+    end
+
+    context "when chat is disabled" do
+      before { SiteSetting.chat_enabled = false }
+
+      it "does nothing" do
+        expect { described_class.new.execute }.not_to change { Chat::Message.in_dm_channel.count }
+      end
     end
   end
 end

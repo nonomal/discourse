@@ -1,8 +1,8 @@
-import cookie, { removeCookie } from "discourse/lib/cookie";
-import I18n from "I18n";
-import Session from "discourse/models/session";
 import { ajax } from "discourse/lib/ajax";
-import discourseLater from "discourse-common/lib/later";
+import cookie, { removeCookie } from "discourse/lib/cookie";
+import discourseLater from "discourse/lib/later";
+import Session from "discourse/models/session";
+import { i18n } from "discourse-i18n";
 
 export function listColorSchemes(site, options = {}) {
   let schemes = site.get("user_color_schemes");
@@ -32,7 +32,7 @@ export function listColorSchemes(site, options = {}) {
       if (!existing) {
         results.unshift({
           id: defaultDarkColorScheme.id,
-          name: `${defaultDarkColorScheme.name} ${I18n.t(
+          name: `${defaultDarkColorScheme.name} ${i18n(
             "user.color_schemes.default_dark_scheme"
           )}`,
         });
@@ -41,7 +41,7 @@ export function listColorSchemes(site, options = {}) {
 
     results.unshift({
       id: -1,
-      name: I18n.t("user.color_schemes.disable_dark_scheme"),
+      name: i18n("user.color_schemes.disable_dark_scheme"),
     });
   }
 
@@ -54,7 +54,7 @@ export function loadColorSchemeStylesheet(
   darkMode = false
 ) {
   const themeId = theme_id ? `/${theme_id}` : "";
-  ajax(`/color-scheme-stylesheet/${colorSchemeId}${themeId}.json`).then(
+  return ajax(`/color-scheme-stylesheet/${colorSchemeId}${themeId}.json`).then(
     (result) => {
       if (result && result.new_href) {
         const elementId = darkMode ? "cs-preview-dark" : "cs-preview-light";

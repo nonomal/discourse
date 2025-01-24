@@ -11,8 +11,8 @@ module Chat
                :chatable_url,
                :description,
                :title,
+               :unicode_title,
                :slug,
-               :last_message_sent_at,
                :status,
                :archive_failed,
                :archive_completed,
@@ -22,17 +22,20 @@ module Chat
                :memberships_count,
                :current_user_membership,
                :meta,
-               :threading_enabled
+               :threading_enabled,
+               :icon_upload_url
 
-    def threading_enabled
-      SiteSetting.enable_experimental_chat_threaded_discussions && object.threading_enabled
-    end
+    has_one :last_message, serializer: Chat::LastMessageSerializer, embed: :objects
 
     def initialize(object, opts)
       super(object, opts)
 
       @opts = opts
       @current_user_membership = opts[:membership]
+    end
+
+    def icon_upload_url
+      object.icon_upload&.url
     end
 
     def include_description?
@@ -49,6 +52,10 @@ module Chat
 
     def title
       object.name || object.title(scope.user)
+    end
+
+    def unicode_title
+      Emoji.gsub_emoji_to_unicode(title)
     end
 
     def chatable
@@ -91,7 +98,7 @@ module Chat
     end
 
     def include_auto_join_users?
-      scope.can_edit_chat_channel?
+      object.category_channel? && scope.can_edit_chat_channel?(object)
     end
 
     def include_current_user_membership?
@@ -116,7 +123,24 @@ module Chat
       }
 
       ids[:kick] = kick_message_bus_id if !object.direct_message_channel?
-      { message_bus_last_ids: ids }
+      data = { message_bus_last_ids: ids }
+
+      if @opts.key?(:can_join_chat_channel)
+        data[:can_join_chat_channel] = @opts[:can_join_chat_channel]
+      else
+        data[:can_join_chat_channel] = scope.can_join_chat_channel?(object)
+      end
+
+      data[:can_flag] = scope.can_flag_in_chat_channel?(
+        object,
+        post_allowed_category_ids: @opts[:post_allowed_category_ids],
+      )
+      data[:user_silenced] = !scope.can_create_chat_message?
+      data[:can_moderate] = scope.can_moderate_chat?(object.chatable)
+      data[:can_delete_self] = scope.can_delete_own_chats?(object.chatable)
+      data[:can_delete_others] = scope.can_delete_other_chats?(object.chatable)
+
+      data
     end
 
     alias_method :include_archive_topic_id?, :include_archive_status?

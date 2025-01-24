@@ -1,6 +1,6 @@
-import { acceptance, exists } from "discourse/tests/helpers/qunit-helpers";
 import { click, visit } from "@ember/test-helpers";
 import { test } from "qunit";
+import { acceptance } from "discourse/tests/helpers/qunit-helpers";
 import selectKit from "discourse/tests/helpers/select-kit-helper";
 
 acceptance("User Preferences - Tracking", function (needs) {
@@ -24,10 +24,9 @@ acceptance("User Preferences - Tracking", function (needs) {
 
     await visit("/u/eviltrout/preferences/tracking");
 
-    assert.notOk(
-      exists(".tag-notifications"),
-      "tag notification levels section is not displayed"
-    );
+    assert
+      .dom(".tag-notifications")
+      .doesNotExist("tag notification levels section is not displayed");
   });
 
   test("updating notification levels of tags when tagging is enabled", async function (assert) {
@@ -48,7 +47,7 @@ acceptance("User Preferences - Tracking", function (needs) {
 
     await watchedTagsSelector.expand();
 
-    assert.notOk(
+    assert.false(
       watchedTagsSelector.rowByValue("monkey").exists(),
       "tag that has already been selected is not available for selection"
     );
@@ -62,7 +61,7 @@ acceptance("User Preferences - Tracking", function (needs) {
     await mutedTagsSelector.expand();
 
     ["monkey", "gazelle"].forEach((tagName) => {
-      assert.notOk(
+      assert.false(
         mutedTagsSelector.rowByValue(tagName).exists(),
         `tag "${tagName}" has already been selected is not available for selection`
       );
@@ -77,7 +76,7 @@ acceptance("User Preferences - Tracking", function (needs) {
     await watchedFirstPostTagsSelector.expand();
 
     ["dog", "gazelle", "monkey"].forEach((tagName) => {
-      assert.notOk(
+      assert.false(
         watchedFirstPostTagsSelector.rowByValue(tagName).exists(),
         "tag `${tagName}` has already been selected is not available for selection"
       );
@@ -108,7 +107,7 @@ acceptance("User Preferences - Tracking", function (needs) {
 
     await trackedCategoriesSelector.expand();
 
-    assert.notOk(
+    assert.false(
       trackedCategoriesSelector.rowByValue("3").exists(),
       "category that has already been selected is not available for selection"
     );
@@ -122,7 +121,7 @@ acceptance("User Preferences - Tracking", function (needs) {
     await mutedCategoriesSelector.expand();
 
     ["3", "4"].forEach((categoryId) => {
-      assert.notOk(
+      assert.false(
         mutedCategoriesSelector.rowByValue(categoryId).exists(),
         `category id "${categoryId}" that has already been selected is not available for selection`
       );
@@ -137,7 +136,7 @@ acceptance("User Preferences - Tracking", function (needs) {
     await watchedFirstCategoriesSelector.expand();
 
     ["3", "4", "6"].forEach((categoryId) => {
-      assert.notOk(
+      assert.false(
         watchedFirstCategoriesSelector.rowByValue(categoryId).exists(),
         `category id "${categoryId}" that has already been selected is not available for selection`
       );
@@ -171,7 +170,7 @@ acceptance("User Preferences - Tracking", function (needs) {
 
     await trackedCategoriesSelector.expand();
 
-    assert.notOk(
+    assert.false(
       trackedCategoriesSelector.rowByValue("4").exists(),
       "category that is set to regular is not available for selection"
     );
@@ -194,6 +193,22 @@ acceptance("User Preferences - Tracking", function (needs) {
       "watched_category_ids[]": ["3"],
       "watched_first_post_category_ids[]": ["-1"],
     });
+  });
+
+  test("additional precedence option when one category is watched and tag is muted", async function (assert) {
+    this.siteSettings.tagging_enabled = true;
+
+    await visit("/u/eviltrout/preferences/tracking");
+
+    const mutedTagsSelector = selectKit(
+      ".tracking-controls__muted-tags .tag-chooser"
+    );
+
+    assert.dom(".user-preferences__watched-precedence-over-muted").doesNotExist;
+    await mutedTagsSelector.expand();
+    await mutedTagsSelector.selectRowByValue("dog");
+
+    assert.dom(".user-preferences__watched-precedence-over-muted").exists();
   });
 
   test("tracking category which is set to regular notification level for user when mute_all_categories_by_default site setting is disabled", async function (assert) {

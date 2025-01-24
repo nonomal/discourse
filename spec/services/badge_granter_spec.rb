@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 RSpec.describe BadgeGranter do
-  fab!(:badge) { Fabricate(:badge) }
-  fab!(:user) { Fabricate(:user) }
+  fab!(:badge)
+  fab!(:user)
 
   before { BadgeGranter.enable_queue }
 
@@ -115,7 +115,7 @@ RSpec.describe BadgeGranter do
     end
   end
 
-  describe "backfill" do
+  describe ".backfill" do
     it "has no broken badge queries" do
       Badge.all.each { |b| BadgeGranter.backfill(b) }
     end
@@ -210,6 +210,46 @@ RSpec.describe BadgeGranter do
       BadgeGranter.backfill(first_share)
 
       expect(UserBadge.where(user_id: user_id).count).to eq(0)
+    end
+
+    it "auto revokes badges from users when badge is set to auto revoke and user no longer satisfy the badge's query" do
+      user.update!(username: "cool_username")
+
+      badge_for_having_cool_username =
+        Fabricate(
+          :badge,
+          query:
+            "SELECT users.id user_id, CURRENT_TIMESTAMP granted_at FROM users WHERE users.username = 'cool_username'",
+          auto_revoke: true,
+        )
+
+      granted_user_ids = []
+
+      BadgeGranter.backfill(
+        badge_for_having_cool_username,
+        granted_callback: ->(user_ids) { granted_user_ids.concat(user_ids) },
+      )
+
+      expect(granted_user_ids).to eq([user.id])
+
+      expect(
+        UserBadge.exists?(user_id: user.id, badge_id: badge_for_having_cool_username.id),
+      ).to eq(true)
+
+      user.update!(username: "not_cool_username")
+
+      revoked_user_ids = []
+
+      BadgeGranter.backfill(
+        badge_for_having_cool_username,
+        revoked_callback: ->(user_ids) { revoked_user_ids.concat(user_ids) },
+      )
+
+      expect(revoked_user_ids).to eq([user.id])
+
+      expect(
+        UserBadge.exists?(user_id: user.id, badge_id: badge_for_having_cool_username.id),
+      ).to eq(false)
     end
   end
 
@@ -309,7 +349,7 @@ RSpec.describe BadgeGranter do
   end
 
   describe "revoke" do
-    fab!(:admin) { Fabricate(:admin) }
+    fab!(:admin)
     let!(:user_badge) { BadgeGranter.grant(badge, user) }
 
     it "revokes the badge and does necessary cleanup" do
@@ -330,6 +370,10 @@ RSpec.describe BadgeGranter do
       let(:customized_badge_name) { "Merit Badge" }
 
       before do
+        I18n.backend.store_translations(
+          :en,
+          { badges: { Badge.i18n_name(badge.name) => { name: "Badge 0" } } },
+        )
         TranslationOverride.upsert!(I18n.locale, Badge.i18n_key(badge.name), customized_badge_name)
       end
 
@@ -381,6 +425,10 @@ RSpec.describe BadgeGranter do
 
     it "removes custom badge titles" do
       custom_badge_title = "this is a badge title"
+      I18n.backend.store_translations(
+        :en,
+        { badges: { Badge.i18n_name(badge.name) => { name: "Badge 0" } } },
+      )
       TranslationOverride.create!(
         translation_key: badge.translation_key,
         value: custom_badge_title,
@@ -396,8 +444,8 @@ RSpec.describe BadgeGranter do
   end
 
   describe "update_badges" do
-    fab!(:user) { Fabricate(:user) }
-    fab!(:liker) { Fabricate(:user) }
+    fab!(:user) { Fabricate(:user, refresh_auto_groups: true) }
+    fab!(:liker) { Fabricate(:user, refresh_auto_groups: true) }
 
     it "grants autobiographer" do
       user.user_profile.bio_raw = "THIS IS MY bio it a long bio I like my bio"

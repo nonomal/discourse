@@ -1,25 +1,28 @@
-import { action } from "@ember/object";
-import { inject as service } from "@ember/service";
-import { and, notEmpty } from "@ember/object/computed";
-import DiscourseURL, { userPath } from "discourse/lib/url";
-import { fmt, propertyNotEqual, setting } from "discourse/lib/computed";
-import AdminUser from "admin/models/admin-user";
-import CanCheckEmails from "discourse/mixins/can-check-emails";
 import Controller from "@ember/controller";
-import I18n from "I18n";
-import { ajax } from "discourse/lib/ajax";
-import discourseComputed from "discourse-common/utils/decorators";
-import getURL from "discourse-common/lib/get-url";
+import { action, computed } from "@ember/object";
+import { and, notEmpty } from "@ember/object/computed";
+import { service } from "@ember/service";
 import { htmlSafe } from "@ember/template";
-import { extractError, popupAjaxError } from "discourse/lib/ajax-error";
-import showModal from "discourse/lib/show-modal";
+import { ajax } from "discourse/lib/ajax";
+import { popupAjaxError } from "discourse/lib/ajax-error";
+import CanCheckEmailsHelper from "discourse/lib/can-check-emails-helper";
+import { fmt, propertyNotEqual, setting } from "discourse/lib/computed";
+import discourseComputed from "discourse/lib/decorators";
+import getURL from "discourse/lib/get-url";
+import DiscourseURL, { userPath } from "discourse/lib/url";
+import { i18n } from "discourse-i18n";
+import AdminUser from "admin/models/admin-user";
+import DeletePostsConfirmationModal from "../components/modal/delete-posts-confirmation";
+import DeleteUserPostsProgressModal from "../components/modal/delete-user-posts-progress";
+import MergeUsersConfirmationModal from "../components/modal/merge-users-confirmation";
+import MergeUsersProgressModal from "../components/modal/merge-users-progress";
+import MergeUsersPromptModal from "../components/modal/merge-users-prompt";
 
-export default class AdminUserIndexController extends Controller.extend(
-  CanCheckEmails
-) {
+export default class AdminUserIndexController extends Controller {
   @service router;
   @service dialog;
   @service adminTools;
+  @service modal;
 
   originalPrimaryGroupId = null;
   customGroupIdsBuffer = null;
@@ -29,6 +32,7 @@ export default class AdminUserIndexController extends Controller.extend(
   ssoLastPayload = null;
 
   @setting("enable_badges") showBadges;
+  @setting("moderators_view_emails") canModeratorsViewEmails;
   @notEmpty("model.manual_locked_trust_level") hasLockedTrustLevel;
 
   @propertyNotEqual("originalPrimaryGroupId", "model.primary_group_id")
@@ -73,8 +77,8 @@ export default class AdminUserIndexController extends Controller.extend(
   @discourseComputed("model.associated_accounts")
   associatedAccounts(associatedAccounts) {
     return associatedAccounts
-      .map((provider) => `${provider.name} (${provider.description})`)
-      .join(", ");
+      ?.map((provider) => `${provider.name} (${provider.description})`)
+      ?.join(", ");
   }
 
   @discourseComputed("model.user_fields.[]")
@@ -93,14 +97,14 @@ export default class AdminUserIndexController extends Controller.extend(
     }
 
     if (staff) {
-      return I18n.t("admin.user.delete_posts_forbidden_because_staff");
+      return i18n("admin.user.delete_posts_forbidden_because_staff");
     }
     if (postCount > this.siteSettings.delete_all_posts_max) {
-      return I18n.t("admin.user.cant_delete_all_too_many_posts", {
+      return i18n("admin.user.cant_delete_all_too_many_posts", {
         count: this.siteSettings.delete_all_posts_max,
       });
     } else {
-      return I18n.t("admin.user.cant_delete_all_posts", {
+      return i18n("admin.user.cant_delete_all_posts", {
         count: this.siteSettings.delete_user_max_post_age,
       });
     }
@@ -113,9 +117,9 @@ export default class AdminUserIndexController extends Controller.extend(
     }
 
     if (staff) {
-      return I18n.t("admin.user.delete_forbidden_because_staff");
+      return i18n("admin.user.delete_forbidden_because_staff");
     } else {
-      return I18n.t("admin.user.delete_forbidden", {
+      return i18n("admin.user.delete_forbidden", {
         count: this.siteSettings.delete_user_max_post_age,
       });
     }
@@ -126,10 +130,28 @@ export default class AdminUserIndexController extends Controller.extend(
     return { editor: username };
   }
 
+  @computed("model.id", "currentUser.id")
+  get canCheckEmails() {
+    return new CanCheckEmailsHelper(
+      this.model,
+      this.canModeratorsViewEmails,
+      this.currentUser
+    ).canCheckEmails;
+  }
+
+  @computed("model.id", "currentUser.id")
+  get canAdminCheckEmails() {
+    return new CanCheckEmailsHelper(
+      this.model,
+      this.canModeratorsViewEmails,
+      this.currentUser
+    ).canAdminCheckEmails;
+  }
+
   groupAdded(added) {
     this.model
       .groupAdded(added)
-      .catch(() => this.dialog.alert(I18n.t("generic_error")));
+      .catch(() => this.dialog.alert(i18n("generic_error")));
   }
 
   groupRemoved(groupId) {
@@ -140,7 +162,7 @@ export default class AdminUserIndexController extends Controller.extend(
           this.set("originalPrimaryGroupId", null);
         }
       })
-      .catch(() => this.dialog.alert(I18n.t("generic_error")));
+      .catch(() => this.dialog.alert(i18n("generic_error")));
   }
 
   @discourseComputed("ssoLastPayload")
@@ -155,9 +177,9 @@ export default class AdminUserIndexController extends Controller.extend(
       .then(() => DiscourseURL.redirectTo("/"))
       .catch((e) => {
         if (e.status === 404) {
-          this.dialog.alert(I18n.t("admin.impersonate.not_found"));
+          this.dialog.alert(i18n("admin.impersonate.not_found"));
         } else {
-          this.dialog.alert(I18n.t("admin.impersonate.invalid"));
+          this.dialog.alert(i18n("admin.impersonate.invalid"));
         }
       });
   }
@@ -166,7 +188,7 @@ export default class AdminUserIndexController extends Controller.extend(
   logOut() {
     return this.model
       .logOut()
-      .then(() => this.dialog.alert(I18n.t("admin.user.logged_out")));
+      .then(() => this.dialog.alert(i18n("admin.user.logged_out")));
   }
 
   @action
@@ -192,7 +214,7 @@ export default class AdminUserIndexController extends Controller.extend(
         this.model.setProperties({ active: false, can_activate: true })
       )
       .catch((e) => {
-        const error = I18n.t("admin.user.deactivate_failed", {
+        const error = i18n("admin.user.deactivate_failed", {
           error: this._formatError(e),
         });
         this.dialog.alert(error);
@@ -203,7 +225,7 @@ export default class AdminUserIndexController extends Controller.extend(
   sendActivationEmail() {
     return this.model
       .sendActivationEmail()
-      .then(() => this.dialog.alert(I18n.t("admin.user.activation_email_sent")))
+      .then(() => this.dialog.alert(i18n("admin.user.activation_email_sent")))
       .catch(popupAjaxError);
   }
 
@@ -218,7 +240,7 @@ export default class AdminUserIndexController extends Controller.extend(
         })
       )
       .catch((e) => {
-        const error = I18n.t("admin.user.activate_failed", {
+        const error = i18n("admin.user.activate_failed", {
           error: this._formatError(e),
         });
         this.dialog.alert(error);
@@ -236,7 +258,7 @@ export default class AdminUserIndexController extends Controller.extend(
       .grantAdmin()
       .then((result) => {
         if (result.email_confirmation_required) {
-          this.dialog.alert(I18n.t("admin.user.grant_admin_confirm"));
+          this.dialog.alert(i18n("admin.user.grant_admin_confirm"));
         }
       })
       .catch((error) => {
@@ -246,14 +268,7 @@ export default class AdminUserIndexController extends Controller.extend(
             queryParams: { nonce },
           });
         } else {
-          const htmlMessage = error.jqXHR?.responseJSON.html_message;
-          if (htmlMessage) {
-            this.dialog.alert({
-              message: htmlSafe(error.jqXHR?.responseJSON.error),
-            });
-          } else {
-            popupAjaxError(error);
-          }
+          popupAjaxError(error);
         }
       });
   }
@@ -280,7 +295,7 @@ export default class AdminUserIndexController extends Controller.extend(
         }
         error =
           error ||
-          I18n.t("admin.user.trust_level_change_failed", {
+          i18n("admin.user.trust_level_change_failed", {
             error: this._formatError(e),
           });
         this.dialog.alert(error);
@@ -304,7 +319,7 @@ export default class AdminUserIndexController extends Controller.extend(
         }
         error =
           error ||
-          I18n.t("admin.user.trust_level_change_failed", {
+          i18n("admin.user.trust_level_change_failed", {
             error: this._formatError(e),
           });
         this.dialog.alert(error);
@@ -319,6 +334,16 @@ export default class AdminUserIndexController extends Controller.extend(
   @action
   silence() {
     return this.model.silence();
+  }
+
+  @action
+  deleteAssociatedAccounts() {
+    this.dialog.yesNoConfirm({
+      message: i18n("admin.user.delete_associated_accounts_confirm"),
+      didConfirm: () => {
+        this.model.deleteAssociatedAccounts().catch(popupAjaxError);
+      },
+    });
   }
 
   @action
@@ -338,27 +363,27 @@ export default class AdminUserIndexController extends Controller.extend(
               document.location = getURL("/admin/users/list/active");
             }
           } else {
-            this.dialog.alert(I18n.t("admin.user.anonymize_failed"));
+            this.dialog.alert(i18n("admin.user.anonymize_failed"));
             if (data.user) {
               user.setProperties(data.user);
             }
           }
         })
-        .catch(() => this.dialog.alert(I18n.t("admin.user.anonymize_failed")));
+        .catch(() => this.dialog.alert(i18n("admin.user.anonymize_failed")));
     };
 
     this.dialog.alert({
-      message: I18n.t("admin.user.anonymize_confirm"),
+      message: i18n("admin.user.anonymize_confirm"),
       class: "delete-user-modal",
       buttons: [
         {
-          icon: "exclamation-triangle",
-          label: I18n.t("admin.user.anonymize_yes"),
+          icon: "triangle-exclamation",
+          label: i18n("admin.user.anonymize_yes"),
           class: "btn-danger",
           action: () => performAnonymize(),
         },
         {
-          label: I18n.t("composer.cancel"),
+          label: i18n("composer.cancel"),
         },
       ],
     });
@@ -366,7 +391,12 @@ export default class AdminUserIndexController extends Controller.extend(
 
   @action
   disableSecondFactor() {
-    return this.model.disableSecondFactor();
+    this.dialog.yesNoConfirm({
+      message: i18n("admin.user.disable_second_factor_confirm"),
+      didConfirm: () => {
+        return this.model.disableSecondFactor();
+      },
+    });
   }
 
   @action
@@ -386,7 +416,7 @@ export default class AdminUserIndexController extends Controller.extend(
     const location = document.location.pathname;
 
     const performDestroy = (block) => {
-      this.dialog.notice(I18n.t("admin.user.deleting_user"));
+      this.dialog.notice(i18n("admin.user.deleting_user"));
       let formData = { context: location };
       if (block) {
         formData["block_email"] = true;
@@ -406,36 +436,36 @@ export default class AdminUserIndexController extends Controller.extend(
               document.location = getURL("/admin/users/list/active");
             }
           } else {
-            this.dialog.alert(I18n.t("admin.user.delete_failed"));
+            this.dialog.alert(i18n("admin.user.delete_failed"));
           }
         })
         .catch(() => {
-          this.dialog.alert(I18n.t("admin.user.delete_failed"));
+          this.dialog.alert(i18n("admin.user.delete_failed"));
         });
     };
 
     this.dialog.alert({
-      title: I18n.t("admin.user.delete_confirm_title"),
-      message: I18n.t("admin.user.delete_confirm"),
+      title: i18n("admin.user.delete_confirm_title"),
+      message: i18n("admin.user.delete_confirm"),
       class: "delete-user-modal",
       buttons: [
         {
-          label: I18n.t("admin.user.delete_dont_block"),
+          label: i18n("admin.user.delete_dont_block"),
           class: "btn-primary",
           action: () => {
             return performDestroy(false);
           },
         },
         {
-          icon: "exclamation-triangle",
-          label: I18n.t("admin.user.delete_and_block"),
+          icon: "triangle-exclamation",
+          label: i18n("admin.user.delete_and_block"),
           class: "btn-danger",
           action: () => {
             return performDestroy(true);
           },
         },
         {
-          label: I18n.t("composer.cancel"),
+          label: i18n("composer.cancel"),
         },
       ],
     });
@@ -443,19 +473,21 @@ export default class AdminUserIndexController extends Controller.extend(
 
   @action
   promptTargetUser() {
-    showModal("admin-merge-users-prompt", {
-      admin: true,
-      model: this.model,
+    this.modal.show(MergeUsersPromptModal, {
+      model: {
+        user: this.model,
+        showMergeConfirmation: this.showMergeConfirmation,
+      },
     });
   }
 
   @action
   showMergeConfirmation(targetUsername) {
-    showModal("admin-merge-users-confirmation", {
-      admin: true,
+    this.modal.show(MergeUsersConfirmationModal, {
       model: {
         username: this.model.username,
         targetUsername,
+        merge: this.merge,
       },
     });
   }
@@ -475,17 +507,14 @@ export default class AdminUserIndexController extends Controller.extend(
       .merge(formData)
       .then((response) => {
         if (response.success) {
-          showModal("admin-merge-users-progress", {
-            admin: true,
-            model: this.model,
-          });
+          this.modal.show(MergeUsersProgressModal);
         } else {
-          this.dialog.alert(I18n.t("admin.user.merge_failed"));
+          this.dialog.alert(i18n("admin.user.merge_failed"));
         }
       })
       .catch(() => {
         AdminUser.find(user.id).then((u) => user.setProperties(u));
-        this.dialog.alert(I18n.t("admin.user.merge_failed"));
+        this.dialog.alert(i18n("admin.user.merge_failed"));
       });
   }
 
@@ -586,7 +615,7 @@ export default class AdminUserIndexController extends Controller.extend(
       data: { primary_group_id: primaryGroupId },
     })
       .then(() => this.set("originalPrimaryGroupId", primaryGroupId))
-      .catch(() => this.dialog.alert(I18n.t("generic_error")));
+      .catch(() => this.dialog.alert(i18n("generic_error")));
   }
 
   @action
@@ -597,7 +626,7 @@ export default class AdminUserIndexController extends Controller.extend(
   @action
   deleteSSORecord() {
     return this.dialog.yesNoConfirm({
-      message: I18n.t("admin.user.discourse_connect.confirm_delete"),
+      message: i18n("admin.user.discourse_connect.confirm_delete"),
       didConfirm: () => this.model.deleteSSORecord(),
     });
   }
@@ -626,48 +655,23 @@ export default class AdminUserIndexController extends Controller.extend(
 
   @action
   showDeletePostsConfirmation() {
-    showModal("admin-delete-posts-confirmation", {
-      admin: true,
-      model: this.model,
+    this.modal.show(DeletePostsConfirmationModal, {
+      model: { user: this.model, deleteAllPosts: this.deleteAllPosts },
     });
   }
 
   @action
+  updateUserPostCount(count) {
+    this.model.set("post_count", count);
+  }
+
+  @action
   deleteAllPosts() {
-    let deletedPosts = 0;
-    let deletedPercentage = 0;
-    const user = this.model;
-
-    const performDelete = (progressModal) => {
-      this.model
-        .deleteAllPosts()
-        .then(({ posts_deleted }) => {
-          if (posts_deleted === 0) {
-            user.set("post_count", 0);
-            progressModal.send("closeModal");
-          } else {
-            deletedPosts += posts_deleted;
-            deletedPercentage = Math.floor(
-              (deletedPosts * 100) / user.get("post_count")
-            );
-            progressModal.setProperties({
-              deletedPercentage,
-            });
-            performDelete(progressModal);
-          }
-        })
-        .catch((e) => {
-          progressModal.send("closeModal");
-          let error;
-          AdminUser.find(user.get("id")).then((u) => user.setProperties(u));
-          error = extractError(e, I18n.t("admin.user.delete_posts_failed"));
-          this.dialog.alert(error);
-        });
-    };
-
-    const progressModal = showModal("admin-delete-user-posts-progress", {
-      admin: true,
+    this.modal.show(DeleteUserPostsProgressModal, {
+      model: {
+        user: this.model,
+        updateUserPostCount: this.updateUserPostCount,
+      },
     });
-    performDelete(progressModal);
   }
 }

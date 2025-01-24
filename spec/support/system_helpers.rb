@@ -2,33 +2,84 @@
 require "highline/import"
 
 module SystemHelpers
+  PLATFORM_KEY_MODIFIER = RUBY_PLATFORM =~ /darwin/i ? :meta : :control
+
   def pause_test
-    result =
-      ask(
-        "\n\e[33mTest paused, press enter to resume, type `d` and press enter to start debugger.\e[0m",
-      )
+    msg = "Test paused. Press enter to resume, or `d` + enter to start debugger.\n\n"
+    msg += "Browser inspection URLs:\n"
+
+    base_url = page.driver.browser.send(:devtools_address)
+    uri = URI(base_url)
+    response = Net::HTTP.get(uri.hostname, "/json/list", uri.port)
+
+    socat_pid = nil
+
+    if exposed_port = ENV["SELENIUM_FORWARD_DEVTOOLS_TO_PORT"]
+      socat_pid =
+        fork do
+          chrome_port = uri.port
+          exec "socat tcp-listen:#{exposed_port},reuseaddr,fork tcp:localhost:#{chrome_port}"
+        end
+    end
+
+    # Fetch devtools urls
+    base_url = page.driver.browser.send(:devtools_address)
+    uri = URI(base_url)
+    response = Net::HTTP.get(uri.hostname, "/json/list", uri.port)
+    JSON
+      .parse(response)
+      .each do |result|
+        devtools_url = "#{base_url}#{result["devtoolsFrontendUrl"]}"
+
+        devtools_url = devtools_url.gsub(":#{uri.port}", ":#{exposed_port}") if exposed_port
+
+        if ENV["CODESPACE_NAME"]
+          devtools_url =
+            devtools_url
+              .gsub(
+                "localhost:#{exposed_port}",
+                "#{ENV["CODESPACE_NAME"]}-#{exposed_port}.#{ENV["GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN"]}",
+              )
+              .gsub("http://", "https://")
+              .gsub("ws=", "wss=")
+        end
+
+        msg += " - (#{result["type"]}) #{devtools_url} (#{URI(result["url"]).path})\n"
+      end
+
+    result = ask("\n\e[33m#{msg}\e[0m")
     binding.pry if result == "d" # rubocop:disable Lint/Debugger
+    puts "\e[33mResuming...\e[0m"
+    Process.kill("TERM", socat_pid) if socat_pid
     self
   end
 
   def sign_in(user)
-    visit "/session/#{user.encoded_username}/become.json?redirect=false"
-  end
+    visit File.join(
+            GlobalSetting.relative_url_root || "",
+            "/session/#{user.encoded_username}/become.json?redirect=false",
+          )
 
-  def sign_out
-    delete "/session"
+    expect(page).to have_content("Signed in to #{user.encoded_username} successfully")
   end
 
   def setup_system_test
     SiteSetting.login_required = false
-    SiteSetting.content_security_policy = false
+    SiteSetting.has_login_hint = false
     SiteSetting.force_hostname = Capybara.server_host
     SiteSetting.port = Capybara.server_port
     SiteSetting.external_system_avatars_enabled = false
     SiteSetting.disable_avatar_education_message = true
+    SiteSetting.enable_user_tips = false
+    SiteSetting.splash_screen = false
+    SiteSetting.allowed_internal_hosts =
+      (
+        SiteSetting.allowed_internal_hosts.to_s.split("|") +
+          MinioRunner.config.minio_urls.map { |url| URI.parse(url).host }
+      ).join("|")
   end
 
-  def try_until_success(timeout: 2, frequency: 0.01)
+  def try_until_success(timeout: Capybara.default_max_wait_time, frequency: 0.01)
     start ||= Time.zone.now
     backoff ||= frequency
     yield
@@ -96,20 +147,10 @@ module SystemHelpers
   end
 
   def using_browser_timezone(timezone, &example)
-    previous_browser_timezone = ENV["TZ"]
-
-    ENV["TZ"] = timezone
-
-    using_session(timezone) { freeze_time(&example) }
-
-    ENV["TZ"] = previous_browser_timezone
-  end
-
-  # When using parallelism, Capybara's `using_session` method can cause
-  # intermittent failures as two sessions can be created with the same name
-  # in different tests and be run at the same time.
-  def using_session(name, &block)
-    Capybara.using_session(name.to_s + self.method_name, &block)
+    using_session(timezone) do
+      page.driver.browser.devtools.emulation.set_timezone_override(timezone_id: timezone)
+      freeze_time(&example)
+    end
   end
 
   def select_text_range(selector, start = 0, offset = 5)
@@ -125,5 +166,39 @@ module SystemHelpers
     JS
 
     page.execute_script(js, selector, start, offset)
+  end
+
+  def setup_or_skip_s3_system_test(enable_secure_uploads: false, enable_direct_s3_uploads: true)
+    skip_unless_s3_system_specs_enabled!
+
+    SiteSetting.enable_s3_uploads = true
+
+    SiteSetting.s3_upload_bucket = "discoursetest"
+    SiteSetting.enable_upload_debug_mode = true
+
+    SiteSetting.s3_access_key_id = MinioRunner.config.minio_root_user
+    SiteSetting.s3_secret_access_key = MinioRunner.config.minio_root_password
+    SiteSetting.s3_endpoint = MinioRunner.config.minio_server_url
+
+    SiteSetting.enable_direct_s3_uploads = enable_direct_s3_uploads
+    SiteSetting.secure_uploads = enable_secure_uploads
+
+    MinioRunner.start
+  end
+
+  def skip_unless_s3_system_specs_enabled!
+    if !ENV["CI"] && !ENV["RUN_S3_SYSTEM_SPECS"]
+      skip(
+        "S3 system specs are disabled in this environment, set CI=1 or RUN_S3_SYSTEM_SPECS=1 to enable them.",
+      )
+    end
+  end
+
+  def skip_on_ci!(message = "Flaky on CI")
+    skip(message) if ENV["CI"]
+  end
+
+  def click_logo
+    PageObjects::Components::Logo.click
   end
 end

@@ -1,12 +1,15 @@
+import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
+import domFromString from "discourse/lib/dom-from-string";
 import {
   fetchUnseenMentions,
   linkSeenMentions,
 } from "discourse/lib/link-mentions";
-import { module, test } from "qunit";
 import pretender, { response } from "discourse/tests/helpers/create-pretender";
-import domFromString from "discourse-common/lib/dom-from-string";
 
-module("Unit | Utility | link-mentions", function () {
+module("Unit | Utility | link-mentions", function (hooks) {
+  setupTest(hooks);
+
   test("linkSeenMentions replaces users and groups", async function (assert) {
     pretender.get("/composer/mentions", () =>
       response({
@@ -35,15 +38,11 @@ module("Unit | Utility | link-mentions", function () {
     `)[0];
     await linkSeenMentions(root);
 
-    assert.strictEqual(root.querySelector("a").innerText, "@valid_user");
-    assert.strictEqual(root.querySelectorAll("a")[1].innerText, "@valid_group");
-    assert.strictEqual(
-      root.querySelector("a[data-mentionable-user-count]").innerText,
-      "@mentionable_group"
-    );
-    assert.strictEqual(
-      root.querySelector("span.mention").innerHTML,
-      "@invalid"
-    );
+    assert.dom(root.querySelectorAll("a")[0]).hasText("@valid_user");
+    assert.dom(root.querySelectorAll("a")[1]).hasText("@valid_group");
+    assert
+      .dom("a[data-mentionable-user-count]", root)
+      .hasText("@mentionable_group");
+    assert.dom("span.mention", root).hasHtml("@invalid");
   });
 });

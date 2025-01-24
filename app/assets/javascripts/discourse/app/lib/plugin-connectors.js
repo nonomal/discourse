@@ -1,37 +1,63 @@
-import { buildRawConnectorCache } from "discourse-common/lib/raw-templates";
-import deprecated from "discourse-common/lib/deprecated";
-import DiscourseTemplateMap from "discourse-common/lib/discourse-template-map";
 import {
   getComponentTemplate,
   hasInternalComponentManager,
   setComponentTemplate,
 } from "@glimmer/manager";
 import templateOnly from "@ember/component/template-only";
+import { isDeprecatedOutletArgument } from "discourse/helpers/deprecated-outlet-argument";
+import deprecated, { withSilencedDeprecations } from "discourse/lib/deprecated";
+import { buildRawConnectorCache } from "discourse/lib/raw-templates";
 
 let _connectorCache;
 let _rawConnectorCache;
 let _extraConnectorClasses = {};
-let _classPaths;
+let _extraConnectorComponents = {};
+let debugOutletCallback;
 
 export function resetExtraClasses() {
   _extraConnectorClasses = {};
-  _classPaths = undefined;
+  _extraConnectorComponents = {};
 }
 
 // Note: In plugins, define a class by path and it will be wired up automatically
 // eg: discourse/connectors/<OUTLET NAME>/<CONNECTOR NAME>
 export function extraConnectorClass(name, obj) {
+  deprecated(
+    "Defining connector classes via registerConnectorClass is deprecated. See https://meta.discourse.org/t/32727 for more modern patterns.",
+    { id: "discourse.register-connector-class-legacy" }
+  );
   _extraConnectorClasses[name] = obj;
 }
 
-function findOutlets(keys, callback) {
-  keys.forEach(function (res) {
-    const segments = res.split("/");
-    if (segments.includes("connectors")) {
-      const outletName = segments[segments.length - 2];
-      const uniqueName = segments[segments.length - 1];
+export function extraConnectorComponent(outletName, klass) {
+  if (!hasInternalComponentManager(klass)) {
+    throw new Error("klass is not an Ember component");
+  }
+  if (!getComponentTemplate(klass)) {
+    throw new Error(
+      "connector component has no associated template. Ensure the template is colocated or authored with gjs."
+    );
+  }
+  if (outletName.includes("/")) {
+    throw new Error("invalid outlet name");
+  }
+  _extraConnectorComponents[outletName] ??= [];
+  _extraConnectorComponents[outletName].push(klass);
+}
 
-      callback(outletName, res, uniqueName);
+const OUTLET_REGEX =
+  /^discourse(\/[^\/]+)*?(?<template>\/templates)?\/connectors\/(?<outlet>[^\/]+)\/(?<name>[^\/\.]+)$/;
+
+function findOutlets(keys, callback) {
+  return keys.forEach((res) => {
+    const match = res.match(OUTLET_REGEX);
+    if (match) {
+      callback({
+        outletName: match.groups.outlet,
+        connectorName: match.groups.name,
+        moduleName: res,
+        isTemplate: !!match.groups.template,
+      });
     }
   });
 }
@@ -39,25 +65,6 @@ function findOutlets(keys, callback) {
 export function clearCache() {
   _connectorCache = null;
   _rawConnectorCache = null;
-}
-
-function findClass(outletName, uniqueName) {
-  if (!_classPaths) {
-    _classPaths = {};
-    findOutlets(Object.keys(require._eak_seen), (outlet, res, un) => {
-      const possibleConnectorClass = requirejs(res).default;
-      if (possibleConnectorClass.__id) {
-        // This is the template, not the connector class
-        return;
-      }
-      _classPaths[`${outlet}/${un}`] = possibleConnectorClass;
-    });
-  }
-
-  const id = `${outletName}/${uniqueName}`;
-  let foundClass = _extraConnectorClasses[id] || _classPaths[id];
-
-  return foundClass;
 }
 
 /**
@@ -85,11 +92,9 @@ class ConnectorInfo {
   #componentClass;
   #templateOnly;
 
-  constructor(outletName, connectorName, connectorClass, template) {
+  constructor(outletName, connectorName) {
     this.outletName = outletName;
     this.connectorName = connectorName;
-    this.connectorClass = connectorClass;
-    this.template = template;
   }
 
   get componentClass() {
@@ -104,10 +109,34 @@ class ConnectorInfo {
     return `${this.outletName}-outlet ${this.connectorName}`;
   }
 
+  get connectorClass() {
+    if (this.classModule) {
+      return this.classModule;
+    } else if (this.classModuleName) {
+      return require(this.classModuleName).default;
+    } else {
+      return _extraConnectorClasses[`${this.outletName}/${this.connectorName}`];
+    }
+  }
+
+  get template() {
+    if (this.templateModule) {
+      return require(this.templateModule).default;
+    }
+  }
+
+  get humanReadableName() {
+    return `${this.outletName}/${this.connectorName} (${
+      this.classModuleName || this.templateModule
+    })`;
+  }
+
   #buildComponentClass() {
     const klass = this.connectorClass;
     if (klass && hasInternalComponentManager(klass)) {
-      safeSetComponentTemplate(this.template, klass);
+      if (this.template) {
+        safeSetComponentTemplate(this.template, klass);
+      }
       this.#warnUnusableHooks();
       return klass;
     } else {
@@ -141,60 +170,141 @@ class ConnectorInfo {
 function buildConnectorCache() {
   _connectorCache = {};
 
+  const outletsByModuleName = {};
   findOutlets(
-    DiscourseTemplateMap.keys(),
-    (outletName, resource, connectorName) => {
-      _connectorCache[outletName] ||= [];
+    Object.keys(require.entries),
+    ({ outletName, connectorName, moduleName, isTemplate }) => {
+      let key = isTemplate
+        ? moduleName.replace("/templates/", "/")
+        : moduleName;
 
-      const template = require(DiscourseTemplateMap.resolve(resource)).default;
-      const connectorClass = findClass(outletName, connectorName);
+      let info = (outletsByModuleName[key] ??= new ConnectorInfo(
+        outletName,
+        connectorName
+      ));
 
-      _connectorCache[outletName].push(
-        new ConnectorInfo(outletName, connectorName, connectorClass, template)
-      );
+      if (isTemplate) {
+        info.templateModule = moduleName;
+      } else {
+        info.classModuleName = moduleName;
+      }
     }
   );
+
+  for (const info of Object.values(outletsByModuleName)) {
+    _connectorCache[info.outletName] ??= [];
+    _connectorCache[info.outletName].push(info);
+  }
+
+  for (const [outletName, components] of Object.entries(
+    _extraConnectorComponents
+  )) {
+    for (const klass of components) {
+      const info = new ConnectorInfo(outletName);
+      info.classModule = klass;
+
+      _connectorCache[info.outletName] ??= [];
+      _connectorCache[info.outletName].push(info);
+    }
+  }
+}
+
+export function connectorsExist(outletName) {
+  if (!_connectorCache) {
+    buildConnectorCache();
+  }
+  return Boolean(_connectorCache[outletName] || debugOutletCallback);
 }
 
 export function connectorsFor(outletName) {
   if (!_connectorCache) {
     buildConnectorCache();
   }
+  if (debugOutletCallback) {
+    return debugOutletCallback(outletName, _connectorCache[outletName]);
+  }
   return _connectorCache[outletName] || [];
 }
 
-export function renderedConnectorsFor(outletName, args, context) {
+export function renderedConnectorsFor(outletName, args, context, owner) {
   return connectorsFor(outletName).filter((con) => {
-    const shouldRender = con.connectorClass?.shouldRender;
-    return !shouldRender || shouldRender(args, context);
+    return (
+      !con.connectorClass?.shouldRender ||
+      con.connectorClass?.shouldRender(args, context, owner)
+    );
   });
 }
 
 export function rawConnectorsFor(outletName) {
   if (!_rawConnectorCache) {
-    _rawConnectorCache = buildRawConnectorCache(findOutlets);
+    _rawConnectorCache = buildRawConnectorCache();
   }
   return _rawConnectorCache[outletName] || [];
 }
 
-export function buildArgsWithDeprecations(args, deprecatedArgs) {
+export function buildArgsWithDeprecations(args, deprecatedArgs, opts = {}) {
   const output = {};
 
-  Object.keys(args).forEach((key) => {
-    Object.defineProperty(output, key, { value: args[key] });
-  });
-
-  Object.keys(deprecatedArgs).forEach((key) => {
-    Object.defineProperty(output, key, {
-      get() {
-        deprecated(`${key} is deprecated`, {
-          id: "discourse.plugin-connector.deprecated-arg",
-        });
-
-        return deprecatedArgs[key];
-      },
+  if (args) {
+    Object.keys(args).forEach((key) => {
+      Object.defineProperty(output, key, { value: args[key] });
     });
-  });
+  }
+
+  if (deprecatedArgs) {
+    Object.keys(deprecatedArgs).forEach((argumentName) => {
+      Object.defineProperty(output, argumentName, {
+        get() {
+          const deprecatedArg = deprecatedArgs[argumentName];
+
+          return deprecatedArgumentValue(deprecatedArg, {
+            ...opts,
+            argumentName,
+          });
+        },
+      });
+    });
+  }
 
   return output;
+}
+
+export function deprecatedArgumentValue(deprecatedArg, options) {
+  if (!isDeprecatedOutletArgument(deprecatedArg)) {
+    throw new Error(
+      "deprecated argument is not defined properly, use helper `deprecatedOutletArgument` from discourse/helpers/deprecated-outlet-argument"
+    );
+  }
+
+  let message = deprecatedArg.message;
+  if (!message) {
+    if (options.outletName) {
+      message = `outlet arg \`${options.argumentName}\` is deprecated on the outlet \`${options.outletName}\``;
+    } else {
+      message = `${options.argumentName} is deprecated`;
+    }
+  }
+
+  const connectorModule =
+    options.classModuleName || options.templateModule || options.connectorName;
+
+  if (connectorModule) {
+    message += ` [used on connector ${connectorModule}]`;
+  } else if (options.layoutName) {
+    message += ` [used on ${options.layoutName}]`;
+  }
+
+  if (!deprecatedArg.silence) {
+    deprecated(message, deprecatedArg.options);
+    return deprecatedArg.value;
+  }
+
+  return withSilencedDeprecations(deprecatedArg.silence, () => {
+    deprecated(message, deprecatedArg.options);
+    return deprecatedArg.value;
+  });
+}
+
+export function _setOutletDebugCallback(callback) {
+  debugOutletCallback = callback;
 }

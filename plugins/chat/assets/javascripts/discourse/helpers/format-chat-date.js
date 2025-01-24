@@ -1,22 +1,35 @@
-import { registerUnbound } from "discourse-common/lib/helpers";
 import { htmlSafe } from "@ember/template";
-import getURL from "discourse-common/lib/get-url";
-import I18n from "I18n";
+import getURL from "discourse/lib/get-url";
 import User from "discourse/models/user";
+import { i18n } from "discourse-i18n";
 
-registerUnbound("format-chat-date", function (message, mode) {
+export default function formatChatDate(message, options = {}) {
   const currentUser = User.current();
   const tz = currentUser ? currentUser.user_option.timezone : moment.tz.guess();
   const date = moment(new Date(message.createdAt), tz);
-  const url = getURL(`/chat/c/-/${message.channelId}/${message.id}`);
-  const title = date.format(I18n.t("dates.long_with_year"));
 
+  const title = date.format(i18n("dates.long_with_year"));
   const display =
-    mode === "tiny"
-      ? date.format(I18n.t("chat.dates.time_tiny"))
-      : date.format(I18n.t("dates.time"));
+    options.mode === "tiny"
+      ? date.format(i18n("dates.time_short"))
+      : date.format(i18n("dates.time"));
 
-  return htmlSafe(
-    `<a title='${title}' class='chat-time' href='${url}'>${display}</a>`
-  );
-});
+  if (message.staged) {
+    return htmlSafe(
+      `<span title='${title}' tabindex="-1" class='chat-time'>${display}</span>`
+    );
+  } else {
+    let url;
+    if (options.threadContext) {
+      url = getURL(
+        `/chat/c/-/${message.channel.id}/t/${message.thread.id}/${message.id}`
+      );
+    } else {
+      url = getURL(`/chat/c/-/${message.channel.id}/${message.id}`);
+    }
+
+    return htmlSafe(
+      `<a title='${title}' tabindex="-1" class='chat-time' href='${url}'>${display}</a>`
+    );
+  }
+}

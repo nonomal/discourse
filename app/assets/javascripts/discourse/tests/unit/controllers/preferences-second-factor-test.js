@@ -1,5 +1,5 @@
-import { module, test } from "qunit";
 import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
 
 module("Unit | Controller | preferences/second-factor", function (hooks) {
   setupTest(hooks);
@@ -12,6 +12,6 @@ module("Unit | Controller | preferences/second-factor", function (hooks) {
       "controller:preferences/second-factor"
     );
 
-    assert.strictEqual(controller.displayOAuthWarning, true);
+    assert.true(controller.displayOAuthWarning);
   });
 });

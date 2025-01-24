@@ -1,6 +1,6 @@
-import { not } from "@ember/object/computed";
 import EmberObject from "@ember/object";
-import discourseComputed from "discourse-common/utils/decorators";
+import { not } from "@ember/object/computed";
+import discourseComputed from "discourse/lib/decorators";
 
 export default class BackupStatus extends EmberObject {
   @not("restoreEnabled") restoreDisabled;

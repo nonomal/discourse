@@ -1,79 +1,71 @@
-import Controller, { inject as controller } from "@ember/controller";
-import discourseComputed, {
-  debounce,
-  observes,
-} from "discourse-common/utils/decorators";
+import Controller from "@ember/controller";
 import { action } from "@ember/object";
-import { ajax } from "discourse/lib/ajax";
 import { gt } from "@ember/object/computed";
+import { observes } from "@ember-decorators/object";
+import { ajax } from "discourse/lib/ajax";
 import { popupAjaxError } from "discourse/lib/ajax-error";
+import discourseComputed, { debounce } from "discourse/lib/decorators";
 
-export default Controller.extend({
-  application: controller(),
+export default class GroupIndexController extends Controller {
+  queryParams = ["order", "asc", "filter"];
+  order = null;
+  asc = true;
+  filter = null;
+  filterInput = null;
+  loading = false;
+  isBulk = false;
+  showActions = false;
+  bulkSelection = null;
 
-  queryParams: ["order", "asc", "filter"],
+  @gt("model.members.length", 0) hasMembers;
 
-  order: "",
-  asc: true,
-  filter: null,
-  filterInput: null,
-
-  loading: false,
-  isBulk: false,
-  showActions: false,
-
-  bulkSelection: null,
+  get canLoadMore() {
+    return this.get("model.members")?.length < this.get("model.user_count");
+  }
 
   @observes("filterInput")
   filterInputChanged() {
     this._setFilter();
-  },
+  }
 
   @debounce(500)
   _setFilter() {
     this.set("filter", this.filterInput);
-  },
+  }
 
   @observes("order", "asc", "filter")
   _filtersChanged() {
     this.reloadMembers(true);
-  },
+  }
 
   reloadMembers(refresh) {
     if (this.loading || !this.model) {
       return;
     }
 
-    if (!refresh && this.model.members.length >= this.model.user_count) {
-      this.set("application.showFooter", true);
+    if (!refresh && !this.canLoadMore) {
       return;
     }
 
     this.set("loading", true);
     this.model.reloadMembers(this.memberParams, refresh).finally(() => {
-      this.setProperties({
-        "application.showFooter":
-          this.model.members.length >= this.model.user_count,
-        loading: false,
-      });
+      this.set("loading", false);
 
       if (this.refresh) {
         this.set("bulkSelection", []);
       }
     });
-  },
+  }
 
   @discourseComputed("order", "asc", "filter")
   memberParams(order, asc, filter) {
     return { order, asc, filter };
-  },
-
-  hasMembers: gt("model.members.length", 0),
+  }
 
   @discourseComputed("model")
   canManageGroup(model) {
-    return this.currentUser && this.currentUser.canManageGroup(model);
-  },
+    return this.currentUser?.canManageGroup(model);
+  }
 
   @discourseComputed
   filterPlaceholder() {
@@ -82,7 +74,7 @@ export default Controller.extend({
     } else {
       return "groups.members.filter_placeholder";
     }
-  },
+  }
 
   @discourseComputed("filter", "members", "model.can_see_members")
   emptyMessageKey(filter, members, canSeeMembers) {
@@ -93,17 +85,17 @@ export default Controller.extend({
     } else {
       return "groups.empty.members";
     }
-  },
+  }
 
   @action
   loadMore() {
     this.reloadMembers();
-  },
+  }
 
   @action
   toggleActions() {
     this.toggleProperty("showActions");
-  },
+  }
 
   @action
   actOnGroup(member, actionId) {
@@ -126,7 +118,7 @@ export default Controller.extend({
         member.setPrimaryGroup(null).then(() => member.set("primary", false));
         break;
     }
-  },
+  }
 
   @action
   actOnSelection(selection, actionId) {
@@ -180,22 +172,22 @@ export default Controller.extend({
           this.set("isBulk", false);
         });
     }
-  },
+  }
 
   @action
   removeMember(user) {
     this.model.removeMember(user, this.memberParams);
-  },
+  }
 
   @action
   makeOwner(username) {
     this.model.addOwners(username);
-  },
+  }
 
   @action
   removeOwner(user) {
     this.model.removeOwner(user);
-  },
+  }
 
   @action
   addMembers() {
@@ -205,7 +197,7 @@ export default Controller.extend({
         .then(() => this.set("usernames", []))
         .catch(popupAjaxError);
     }
-  },
+  }
 
   @action
   toggleBulkSelect() {
@@ -213,7 +205,7 @@ export default Controller.extend({
       isBulk: !this.isBulk,
       bulkSelection: [],
     });
-  },
+  }
 
   @action
   bulkSelectAll() {
@@ -224,7 +216,7 @@ export default Controller.extend({
           checkbox.click();
         }
       });
-  },
+  }
 
   @action
   bulkClearAll() {
@@ -235,7 +227,7 @@ export default Controller.extend({
           checkbox.click();
         }
       });
-  },
+  }
 
   @action
   selectMember(member, e) {
@@ -246,5 +238,13 @@ export default Controller.extend({
     } else {
       this.bulkSelection.removeObject(member);
     }
-  },
-});
+  }
+
+  @action
+  updateOrder(field, asc) {
+    this.setProperties({
+      order: field,
+      asc,
+    });
+  }
+}

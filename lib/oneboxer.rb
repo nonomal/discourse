@@ -29,6 +29,7 @@ module Oneboxer
       "http://store.steampowered.com",
       "http://vimeo.com",
       "https://www.youtube.com",
+      "https://twitter.com",
       Discourse.base_url,
     ]
   end
@@ -151,7 +152,7 @@ module Oneboxer
   end
 
   def self.redis_cached_response_body_key(uri)
-    "CACHED_RESPONSE_#{uri}"
+    "CACHED_RESPONSE_#{onebox_locale}_#{uri}"
   end
 
   # Parse URLs out of HTML, returning the document when finished.
@@ -164,7 +165,7 @@ module Oneboxer
     doc
   end
 
-  HTML5_BLOCK_ELEMENTS ||= %w[
+  HTML5_BLOCK_ELEMENTS = %w[
     address
     article
     aside
@@ -206,14 +207,14 @@ module Oneboxer
 
   def self.apply(string_or_doc, extra_paths: nil)
     doc = string_or_doc
-    doc = Loofah.fragment(doc) if doc.is_a?(String)
+    doc = Loofah.html5_fragment(doc) if doc.is_a?(String)
     changed = false
 
     each_onebox_link(doc, extra_paths: extra_paths) do |url, element|
       onebox, _ = yield(url, element)
       next if onebox.blank?
 
-      parsed_onebox = Loofah.fragment(onebox)
+      parsed_onebox = Loofah.html5_fragment(onebox)
       next if parsed_onebox.children.blank?
 
       changed = true
@@ -455,7 +456,7 @@ module Oneboxer
       args = {
         user_id: user.id,
         username: user.username,
-        avatar: PrettyText.avatar_img(user.avatar_template, "extra_large"),
+        avatar: PrettyText.avatar_img(user.avatar_template, "huge"),
         name: name,
         bio: user.user_profile.bio_excerpt(230),
         location: Onebox::Helpers.sanitize(user.user_profile.location),
@@ -485,7 +486,7 @@ module Oneboxer
         name: category.name,
         color: category.color,
         logo_url: category.uploaded_logo&.url,
-        description: category.description,
+        description: Onebox::Helpers.sanitize(category.description),
         has_subcategories: category.subcategories.present?,
         subcategories:
           category.subcategories.collect { |sc| { name: sc.name, color: sc.color, url: sc.url } },
@@ -676,9 +677,20 @@ module Oneboxer
       force_custom_user_agent_hosts: force_custom_user_agent_hosts,
       preserve_fragment_url_hosts: preserve_fragment_url_hosts,
       timeout: 5,
+      headers: {
+        "Accept-Language" => accept_language,
+      },
     }
 
     uri = URI(url)
+
+    # For private GitHub repos, we get a 404 when trying to use
+    # FinalDestination to request the final URL because no auth headers
+    # are sent. In this case we can ignore redirects and go straight to
+    # using Onebox.preview
+    if SiteSetting.github_onebox_access_tokens.present? && uri.hostname == "github.com"
+      fd_options[:ignore_redirects] << "https://github.com"
+    end
 
     strategy = Oneboxer.ordered_strategies(uri.hostname).shift if strategy.blank?
 
@@ -695,5 +707,17 @@ module Oneboxer
     fd_options[:default_user_agent] = user_agent_override if user_agent_override
 
     fd_options
+  end
+
+  def self.onebox_locale
+    SiteSetting.onebox_locale.presence || SiteSetting.default_locale
+  end
+
+  def self.accept_language
+    if onebox_locale == "en"
+      "en;q=0.9, *;q=0.5"
+    else
+      "#{onebox_locale.gsub(/_/, "-")};q=0.9, en;q=0.8, *;q=0.5"
+    end
   end
 end

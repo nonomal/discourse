@@ -90,17 +90,21 @@ module Discourse
     # tiny file needed by site settings
     require "highlight_js"
 
-    config.load_defaults 6.1
+    config.load_defaults 7.2
+    config.yjit = GlobalSetting.yjit_enabled
     config.active_record.cache_versioning = false # our custom cache class doesn’t support this
     config.action_controller.forgery_protection_origin_check = false
     config.active_record.belongs_to_required_by_default = false
-    config.active_record.legacy_connection_handling = true
     config.active_record.yaml_column_permitted_classes = [
       Hash,
       HashWithIndifferentAccess,
       Time,
       Symbol,
     ]
+    config.active_support.key_generator_hash_digest_class = OpenSSL::Digest::SHA1
+    config.action_dispatch.cookies_serializer = :hybrid
+    config.action_controller.wrap_parameters_by_default = false
+    config.active_support.cache_format_version = 7.1
 
     # we skip it cause we configure it in the initializer
     # the railtie for message_bus would insert it in the
@@ -113,8 +117,9 @@ module Discourse
       ENV["DISCOURSE_MULTISITE_CONFIG_PATH"] || GlobalSetting.multisite_config_path
     config.multisite_config_path = File.absolute_path(multisite_config_path, Rails.root)
 
+    config.autoload_lib(ignore: %w[common_passwords emoji generators javascripts tasks])
+    Rails.autoloaders.main.do_not_eager_load(config.root.join("lib"))
     # Custom directories with classes and modules you want to be autoloadable.
-    config.autoload_paths << "#{root}/lib"
     config.autoload_paths << "#{root}/lib/guardian"
     config.autoload_paths << "#{root}/lib/i18n"
     config.autoload_paths << "#{root}/lib/validators"
@@ -144,7 +149,7 @@ module Discourse
     config.active_record.use_schema_cache_dump = false
 
     # per https://www.owasp.org/index.php/Password_Storage_Cheat_Sheet
-    config.pbkdf2_iterations = 64_000
+    config.pbkdf2_iterations = 600_000
     config.pbkdf2_algorithm = "sha256"
 
     # rack lock is nothing but trouble, get rid of it
@@ -168,6 +173,9 @@ module Discourse
     config.middleware.swap ActionDispatch::ContentSecurityPolicy::Middleware,
                            ContentSecurityPolicy::Middleware
 
+    require "middleware/csp_script_nonce_injector"
+    config.middleware.insert_after(ActionDispatch::Flash, Middleware::CspScriptNonceInjector)
+
     require "middleware/discourse_public_exceptions"
     config.exceptions_app = Middleware::DiscoursePublicExceptions.new(Rails.public_path)
 
@@ -178,6 +186,15 @@ module Discourse
                                  extensions: %w[.js .es6 .js.es6],
                                  charset: :unicode
     Sprockets.register_postprocessor "application/javascript", DiscourseJsProcessor
+
+    class SprocketsSassUnsupported
+      def self.call(*args)
+        raise "Discourse does not support compiling scss/sass files via Sprockets"
+      end
+    end
+
+    Sprockets.register_engine(".sass", SprocketsSassUnsupported, silence_deprecation: true)
+    Sprockets.register_engine(".scss", SprocketsSassUnsupported, silence_deprecation: true)
 
     Discourse::Application.initializer :prepend_ember_assets do |app|
       # Needs to be in its own initializer so it runs after the append_assets_path initializer defined by Sprockets
@@ -218,7 +235,11 @@ module Discourse
 
     # Use discourse-fonts gem to symlink fonts and generate .scss file
     fonts_path = File.join(config.root, "public/fonts")
-    Discourse::Utils.atomic_ln_s(DiscourseFonts.path_for_fonts, fonts_path)
+    if !File.exist?(fonts_path) || File.realpath(fonts_path) != DiscourseFonts.path_for_fonts
+      STDERR.puts "Symlinking fonts from discourse-fonts gem"
+      File.delete(fonts_path) if File.exist?(fonts_path)
+      Discourse::Utils.atomic_ln_s(DiscourseFonts.path_for_fonts, fonts_path)
+    end
 
     require "stylesheet/manager"
     require "svg_sprite"
@@ -229,6 +250,17 @@ module Discourse
 
       # we got to clear the pool in case plugins connect
       ActiveRecord::Base.connection_handler.clear_active_connections!
+
+      # Mailers and controllers may have been patched by plugins and when the
+      # application is eager loaded, the list of public methods is cached.
+      # We need to invalidate the existing caches, otherwise the new actions
+      # won’t be seen by Rails.
+      if Rails.configuration.eager_load
+        AbstractController::Base.descendants.each do |controller|
+          controller.clear_action_methods!
+          controller.action_methods
+        end
+      end
     end
 
     require "rbtrace" if ENV["RBTRACE"] == "1"

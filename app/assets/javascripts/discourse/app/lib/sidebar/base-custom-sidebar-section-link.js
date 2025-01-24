@@ -19,9 +19,12 @@ export default class BaseCustomSidebarSectionLink {
   /**
    * @returns {string} The Ember route which the section link should link to.
    */
-  get route() {
-    this._notImplemented();
-  }
+  get route() {}
+
+  /**
+   * @returns {string} URL to external website which the section link should link to.
+   */
+  get href() {}
 
   /**
    * @returns {Object} `model` argument for the <LinkTo> component. See https://api.emberjs.com/ember/release/classes/Ember.Templates.components/methods/LinkTo?anchor=LinkTo.
@@ -32,6 +35,11 @@ export default class BaseCustomSidebarSectionLink {
    * @returns {Object[]} `models` argument for the <LinkTo> component. See https://api.emberjs.com/ember/release/classes/Ember.Templates.components/methods/LinkTo?anchor=LinkTo.
    */
   get models() {}
+
+  /**
+   * @returns {boolean} `query` argument for the <LinkTo> component. See See https://api.emberjs.com/ember/release/classes/Ember.Templates.components/methods/LinkTo?anchor=LinkTo.
+   */
+  get query() {}
 
   /**
    * @returns {boolean} `current-when` argument for the <LinkTo> component. See See https://api.emberjs.com/ember/release/classes/Ember.Templates.components/methods/LinkTo?anchor=LinkTo.

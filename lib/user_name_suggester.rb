@@ -7,6 +7,9 @@ module UserNameSuggester
   def self.suggest(*input, current_username: nil)
     name =
       input.find do |item|
+        if !SiteSetting.use_email_for_username_and_name_suggestions
+          next if item.to_s =~ User::EMAIL
+        end
         parsed_name = parse_name_from_email(item)
         break parsed_name if sanitize_username(parsed_name).present?
       end
@@ -114,8 +117,6 @@ module UserNameSuggester
     if SiteSetting.unicode_usernames
       name.unicode_normalize!
 
-      # TODO: Jan 2022, review if still needed
-      # see: https://meta.discourse.org/t/unicode-username-with-as-the-final-char-leads-to-an-error-loading-profile-page/173182
       if name.include?("Σ")
         ctx = MiniRacer::Context.new
         name = ctx.eval("#{name.to_s.to_json}.toLowerCase()")

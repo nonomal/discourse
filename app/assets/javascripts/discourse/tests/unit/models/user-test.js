@@ -1,12 +1,10 @@
-import { module, test } from "qunit";
-import { setupTest } from "ember-qunit";
-import PreloadStore from "discourse/lib/preload-store";
-import sinon from "sinon";
+import { getOwner } from "@ember/owner";
 import { settled } from "@ember/test-helpers";
+import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
+import sinon from "sinon";
+import PreloadStore from "discourse/lib/preload-store";
 import User from "discourse/models/user";
-import pretender, { response } from "discourse/tests/helpers/create-pretender";
-import { getOwner } from "discourse-common/lib/get-owner";
-import * as userTips from "discourse/lib/user-tips";
 
 module("Unit | Model | user", function (hooks) {
   setupTest(hooks);
@@ -15,13 +13,13 @@ module("Unit | Model | user", function (hooks) {
     const store = getOwner(this).lookup("service:store");
     const user = store.createRecord("user", { id: 1, username: "eviltrout" });
 
-    assert.ok(!user.staff, "user is not staff");
+    assert.strictEqual(user.staff, undefined, "user is not staff");
 
     user.toggleProperty("moderator");
-    assert.ok(user.staff, "moderators are staff");
+    assert.true(user.staff, "moderators are staff");
 
     user.setProperties({ moderator: false, admin: true });
-    assert.ok(user.staff, "admins are staff");
+    assert.true(user.staff, "admins are staff");
   });
 
   test("searchContext", function (assert) {
@@ -38,13 +36,13 @@ module("Unit | Model | user", function (hooks) {
   test("isAllowedToUploadAFile", function (assert) {
     const store = getOwner(this).lookup("service:store");
     const user = store.createRecord("user", { trust_level: 0, admin: true });
-    assert.ok(
+    assert.true(
       user.isAllowedToUploadAFile("image"),
       "admin can always upload a file"
     );
 
     user.setProperties({ admin: false, moderator: true });
-    assert.ok(
+    assert.true(
       user.isAllowedToUploadAFile("image"),
       "moderator can always upload a file"
     );
@@ -55,27 +53,18 @@ module("Unit | Model | user", function (hooks) {
     const user = store.createRecord("user", { admin: true });
     const group = store.createRecord("group", { automatic: true });
 
-    assert.strictEqual(
-      user.canManageGroup(group),
-      false,
-      "automatic groups cannot be managed."
-    );
-
-    group.set("automatic", false);
     group.setProperties({ can_admin_group: true });
 
-    assert.strictEqual(
+    assert.true(
       user.canManageGroup(group),
-      true,
       "an admin should be able to manage the group"
     );
 
     user.set("admin", false);
     group.setProperties({ is_group_owner: true });
 
-    assert.strictEqual(
+    assert.true(
       user.canManageGroup(group),
-      true,
       "a group owner should be able to manage the group"
     );
   });
@@ -116,32 +105,32 @@ module("Unit | Model | user", function (hooks) {
 
     User.createCurrent();
 
-    assert.ok(spyMomentGuess.notCalled);
+    assert.false(spyMomentGuess.called);
   });
 
   test("subsequent calls to trackStatus and stopTrackingStatus increase and decrease subscribers counter", function (assert) {
     const store = getOwner(this).lookup("service:store");
     const user = store.createRecord("user");
-    assert.strictEqual(user._subscribersCount, 0);
+    assert.strictEqual(user.statusManager._subscribersCount, 0);
 
-    user.trackStatus();
-    assert.strictEqual(user._subscribersCount, 1);
+    user.statusManager.trackStatus();
+    assert.strictEqual(user.statusManager._subscribersCount, 1);
 
-    user.trackStatus();
-    assert.strictEqual(user._subscribersCount, 2);
+    user.statusManager.trackStatus();
+    assert.strictEqual(user.statusManager._subscribersCount, 2);
 
-    user.stopTrackingStatus();
-    assert.strictEqual(user._subscribersCount, 1);
+    user.statusManager.stopTrackingStatus();
+    assert.strictEqual(user.statusManager._subscribersCount, 1);
 
-    user.stopTrackingStatus();
-    assert.strictEqual(user._subscribersCount, 0);
+    user.statusManager.stopTrackingStatus();
+    assert.strictEqual(user.statusManager._subscribersCount, 0);
   });
 
   test("attempt to stop tracking status if status wasn't tracked doesn't throw", function (assert) {
+    assert.expect(0);
     const store = getOwner(this).lookup("service:store");
     const user = store.createRecord("user");
-    user.stopTrackingStatus();
-    assert.ok(true);
+    user.statusManager.stopTrackingStatus();
   });
 
   test("clears statuses of several users correctly when receiving status updates via appEvents", function (assert) {
@@ -162,8 +151,8 @@ module("Unit | Model | user", function (hooks) {
     const appEvents = user1.appEvents;
 
     try {
-      user1.trackStatus();
-      user2.trackStatus();
+      user1.statusManager.trackStatus();
+      user2.statusManager.trackStatus();
       assert.strictEqual(user1.status, status1);
       assert.strictEqual(user2.status, status2);
 
@@ -175,8 +164,8 @@ module("Unit | Model | user", function (hooks) {
       assert.strictEqual(user1.status, null);
       assert.strictEqual(user2.status, null);
     } finally {
-      user1.stopTrackingStatus();
-      user2.stopTrackingStatus();
+      user1.statusManager.stopTrackingStatus();
+      user2.statusManager.stopTrackingStatus();
     }
   });
 
@@ -187,64 +176,51 @@ module("Unit | Model | user", function (hooks) {
       _clearStatusTimerId: 100,
     });
 
-    assert.notOk(
+    assert.false(
       user.hasOwnProperty("_subscribersCount"),
       "_subscribersCount wasn't set"
     );
-    assert.notOk(
+    assert.false(
       user.hasOwnProperty("_clearStatusTimerId"),
       "_clearStatusTimerId wasn't set"
     );
   });
 
-  test("hideUserTipForever() makes a single request", async function (assert) {
-    const site = getOwner(this).lookup("service:site");
-    site.set("user_tips", { first_notification: 1 });
+  test("pmPath", function (assert) {
     const store = getOwner(this).lookup("service:store");
-    const user = store.createRecord("user", { username: "eviltrout" });
-
-    let requestsCount = 0;
-    pretender.put("/u/eviltrout.json", () => {
-      requestsCount += 1;
-      return response(200, {
-        user: {
-          user_option: {
-            seen_popups: [1],
-          },
-        },
-      });
+    const user = store.createRecord("user", {
+      id: 1,
+      username: "eviltrout",
+      groups: [],
     });
+    const topic = store.createRecord("topic", { id: 1, details: {} });
 
-    await user.hideUserTipForever("first_notification");
-    assert.strictEqual(requestsCount, 1);
+    assert.strictEqual(
+      user.pmPath(topic),
+      `/u/${user.username_lower}/messages`,
+      "user is in no groups and not directly allowed on the topic"
+    );
 
-    await user.hideUserTipForever("first_notification");
-    assert.strictEqual(requestsCount, 1);
-  });
+    const group1 = store.createRecord("group", { id: 1, name: "group1" });
+    const group2 = store.createRecord("group", { id: 2, name: "group2" });
+    topic.details = {
+      allowed_users: [user],
+      allowed_groups: [group1, group2],
+    };
+    user.groups = [group2];
 
-  test("hideUserTipForever() can hide the user tip", async function (assert) {
-    const site = getOwner(this).lookup("service:site");
-    site.set("user_tips", { first_notification: 1 });
-    const store = getOwner(this).lookup("service:store");
-    const user = store.createRecord("user", { username: "eviltrout" });
+    assert.strictEqual(
+      user.pmPath(topic),
+      `/u/${user.username_lower}/messages`,
+      "user is in one group (not the first one) and allowed on the topic"
+    );
 
-    const hideSpy = sinon.spy(userTips, "hideUserTip");
-    const showNextSpy = sinon.spy(userTips, "showNextUserTip");
-    await user.hideUserTipForever("first_notification");
+    topic.details.allowed_users = [];
 
-    assert.ok(hideSpy.calledWith("first_notification"));
-    assert.ok(showNextSpy.calledWith());
-  });
-
-  test("hideUserTipForever() can hide all the user tips", async function (assert) {
-    const site = getOwner(this).lookup("service:site");
-    site.set("user_tips", { first_notification: 1 });
-    const store = getOwner(this).lookup("service:store");
-    const user = store.createRecord("user", { username: "eviltrout" });
-
-    const hideAllSpy = sinon.spy(userTips, "hideAllUserTips");
-    await user.hideUserTipForever();
-
-    assert.ok(hideAllSpy.calledWith());
+    assert.strictEqual(
+      user.pmPath(topic),
+      `/u/${user.username_lower}/messages/group/${group2.name}`,
+      "user is in one group (not the first one) and not allowed on the topic"
+    );
   });
 });

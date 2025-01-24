@@ -1,5 +1,5 @@
 .has-full-page-chat {
-  .create-topics-notice,
+  .global-notice,
   .bootstrap-mode-notice {
     display: none;
   }
@@ -9,4 +9,25 @@
   [data-plugin-name="chat"] {
     display: none;
   }
+}
+
+.user-summary-page .details .controls ul,
+.user-main .details .controls ul {
+  flex-direction: column;
+
+  li:first-child {
+    order: -2;
+  }
+
+  li.user-profile-controls-outlet.chat-button {
+    order: -1;
+
+    &:empty {
+      display: none;
+    }
+  }
+}
+
+.user-main .collapsed-info .details .controls ul {
+  flex-direction: row;
 }

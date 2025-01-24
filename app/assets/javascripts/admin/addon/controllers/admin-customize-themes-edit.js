@@ -1,10 +1,13 @@
-import { action } from "@ember/object";
 import Controller from "@ember/controller";
-import I18n from "I18n";
-import discourseComputed from "discourse-common/utils/decorators";
+import { action } from "@ember/object";
+import { service } from "@ember/service";
 import { url } from "discourse/lib/computed";
+import discourseComputed from "discourse/lib/decorators";
+import { i18n } from "discourse-i18n";
 
 export default class AdminCustomizeThemesEditController extends Controller {
+  @service router;
+
   section = null;
   currentTarget = 0;
   maximized = false;
@@ -30,7 +33,7 @@ export default class AdminCustomizeThemesEditController extends Controller {
 
   @discourseComputed("model.isSaving")
   saveButtonText(isSaving) {
-    return isSaving ? I18n.t("saving") : I18n.t("admin.customize.save");
+    return isSaving ? i18n("saving") : i18n("admin.customize.save");
   }
 
   @discourseComputed("model.changed", "model.isSaving")
@@ -48,7 +51,12 @@ export default class AdminCustomizeThemesEditController extends Controller {
 
   @action
   fieldAdded(target, name) {
-    this.replaceRoute(this.editRouteName, this.get("model.id"), target, name);
+    this.router.replaceWith(
+      this.editRouteName,
+      this.get("model.id"),
+      target,
+      name
+    );
   }
 
   @action
@@ -60,7 +68,7 @@ export default class AdminCustomizeThemesEditController extends Controller {
           (f) => f.edited
         );
 
-        this.replaceRoute(
+        this.router.replaceWith(
           this.editRouteName,
           this.get("model.id"),
           firstTarget.name,
@@ -72,6 +80,6 @@ export default class AdminCustomizeThemesEditController extends Controller {
 
   @action
   goBack() {
-    this.replaceRoute(this.showRouteName, this.model.id);
+    this.router.replaceWith(this.showRouteName, this.model.id);
   }
 }

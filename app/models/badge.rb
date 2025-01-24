@@ -1,9 +1,6 @@
 # frozen_string_literal: true
 
 class Badge < ActiveRecord::Base
-  # TODO: Drop in July 2021
-  self.ignored_columns = %w[image]
-
   include GlobalPath
   include HasSanitizableFields
 
@@ -115,10 +112,12 @@ class Badge < ActiveRecord::Base
   has_many :user_badges, dependent: :destroy
   has_many :upload_references, as: :target, dependent: :destroy
 
-  validates :name, presence: true, uniqueness: true
+  validates :name, presence: true, uniqueness: true, length: { maximum: 100 }
   validates :badge_type, presence: true
   validates :allow_title, inclusion: [true, false]
   validates :multiple_grant, inclusion: [true, false]
+  validates :description, length: { maximum: 500 }
+  validates :long_description, length: { maximum: 1000 }
 
   scope :enabled, -> { where(enabled: true) }
 
@@ -220,7 +219,7 @@ class Badge < ActiveRecord::Base
   end
 
   def self.i18n_name(name)
-    name.downcase.tr(" ", "_")
+    name.to_s.downcase.tr(" ", "_")
   end
 
   def self.display_name(name)
@@ -253,7 +252,7 @@ class Badge < ActiveRecord::Base
   def default_icon=(val)
     if self.image_upload_id.blank?
       self.icon ||= val
-      self.icon = val if self.icon == "fa-certificate"
+      self.icon = val if self.icon == "certificate"
     end
   end
 
@@ -294,7 +293,6 @@ class Badge < ActiveRecord::Base
 
   def long_description=(val)
     self[:long_description] = val if val != long_description
-    val
   end
 
   def description
@@ -309,7 +307,6 @@ class Badge < ActiveRecord::Base
 
   def description=(val)
     self[:description] = val if val != description
-    val
   end
 
   def slug
@@ -347,27 +344,28 @@ end
 #
 # Table name: badges
 #
-#  id                :integer          not null, primary key
-#  name              :string           not null
-#  description       :text
-#  badge_type_id     :integer          not null
-#  grant_count       :integer          default(0), not null
-#  created_at        :datetime         not null
-#  updated_at        :datetime         not null
-#  allow_title       :boolean          default(FALSE), not null
-#  multiple_grant    :boolean          default(FALSE), not null
-#  icon              :string           default("fa-certificate")
-#  listable          :boolean          default(TRUE)
-#  target_posts      :boolean          default(FALSE)
-#  query             :text
-#  enabled           :boolean          default(TRUE), not null
-#  auto_revoke       :boolean          default(TRUE), not null
-#  badge_grouping_id :integer          default(5), not null
-#  trigger           :integer
-#  show_posts        :boolean          default(FALSE), not null
-#  system            :boolean          default(FALSE), not null
-#  long_description  :text
-#  image_upload_id   :integer
+#  id                  :integer          not null, primary key
+#  name                :string           not null
+#  description         :text
+#  badge_type_id       :integer          not null
+#  grant_count         :integer          default(0), not null
+#  created_at          :datetime         not null
+#  updated_at          :datetime         not null
+#  allow_title         :boolean          default(FALSE), not null
+#  multiple_grant      :boolean          default(FALSE), not null
+#  icon                :string           default("certificate")
+#  listable            :boolean          default(TRUE)
+#  target_posts        :boolean          default(FALSE)
+#  query               :text
+#  enabled             :boolean          default(TRUE), not null
+#  auto_revoke         :boolean          default(TRUE), not null
+#  badge_grouping_id   :integer          default(5), not null
+#  trigger             :integer
+#  show_posts          :boolean          default(FALSE), not null
+#  system              :boolean          default(FALSE), not null
+#  long_description    :text
+#  image_upload_id     :integer
+#  show_in_post_header :boolean          default(FALSE), not null
 #
 # Indexes
 #

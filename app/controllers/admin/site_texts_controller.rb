@@ -20,17 +20,21 @@ class Admin::SiteTextsController < Admin::AdminController
 
   def index
     overridden = params[:overridden] == "true"
+    outdated = params[:outdated] == "true"
+    untranslated = params[:untranslated] == "true"
+    only_selected_locale = params[:only_selected_locale] == "true"
     extras = {}
 
     query = params[:q] || ""
 
     locale = fetch_locale(params[:locale])
 
-    if query.blank? && !overridden
+    if query.blank? && !overridden && !outdated && !untranslated
       extras[:recommended] = true
       results = self.class.preferred_keys.map { |k| record_for(key: k, locale: locale) }
     else
-      results = find_translations(query, overridden, locale)
+      results =
+        find_translations(query, overridden, outdated, locale, untranslated, only_selected_locale)
 
       if results.any?
         extras[:regex] = I18n::Backend::DiscourseI18n.create_search_regexp(query, as_string: true)
@@ -127,6 +131,19 @@ class Admin::SiteTextsController < Admin::AdminController
     render_serialized(site_text, SiteTextSerializer, root: "site_text", rest_serializer: true)
   end
 
+  def dismiss_outdated
+    locale = fetch_locale(params[:locale])
+    override = TranslationOverride.find_by(locale: locale, translation_key: params[:id])
+
+    raise Discourse::NotFound if override.blank?
+
+    if override.make_up_to_date!
+      render json: success_json
+    else
+      render json: failed_json.merge(message: "Can only dismiss outdated translations"), status: 422
+    end
+  end
+
   def get_reseed_options
     render_json_dump(
       categories: SeedData::Categories.with_default_locale.reseed_options,
@@ -156,8 +173,13 @@ class Admin::SiteTextsController < Admin::AdminController
   end
 
   def record_for(key:, value: nil, locale:)
+    en_key = TranslationOverride.transform_pluralized_key(key)
     value ||= I18n.with_locale(locale) { I18n.t(key) }
-    { id: key, value: value, locale: locale }
+
+    interpolation_keys =
+      I18nInterpolationKeysFinder.find(I18n.overrides_disabled { I18n.t(en_key, locale: :en) })
+    custom_keys = TranslationOverride.custom_interpolation_keys(en_key)
+    { id: key, value: value, locale: locale, interpolation_keys: interpolation_keys + custom_keys }
   end
 
   PLURALIZED_REGEX = /(.*)\.(zero|one|two|few|many|other)\z/
@@ -184,9 +206,20 @@ class Admin::SiteTextsController < Admin::AdminController
     raise Discourse::NotFound
   end
 
-  def find_translations(query, overridden, locale)
+  def find_translations(query, overridden, outdated, locale, untranslated, only_selected_locale)
     translations = Hash.new { |hash, key| hash[key] = {} }
-    search_results = I18n.with_locale(locale) { I18n.search(query, only_overridden: overridden) }
+    search_results =
+      I18n.with_locale(locale) do
+        I18n.search(query, only_overridden: overridden, only_untranslated: untranslated)
+      end
+
+    if outdated
+      outdated_keys =
+        TranslationOverride.where(status: %i[outdated invalid_interpolation_keys]).pluck(
+          :translation_key,
+        )
+      search_results.select! { |k, _| outdated_keys.include?(k) }
+    end
 
     search_results.each do |key, value|
       if PLURALIZED_REGEX.match(key)
@@ -201,8 +234,8 @@ class Admin::SiteTextsController < Admin::AdminController
     translations.each do |key, value|
       next unless I18n.exists?(key, :en)
 
-      if value&.is_a?(Hash)
-        fix_plural_keys(key, value, locale).each do |plural|
+      if value.is_a?(Hash)
+        fix_plural_keys(key, value, locale, only_selected_locale).each do |plural|
           plural_key = plural[0]
           plural_value = plural[1]
 
@@ -213,6 +246,7 @@ class Admin::SiteTextsController < Admin::AdminController
           )
         end
       else
+        value = I18n.with_locale(locale) { I18n.t(key) } if only_selected_locale
         results << record_for(key: key, value: value, locale: locale)
       end
     end
@@ -220,7 +254,7 @@ class Admin::SiteTextsController < Admin::AdminController
     results
   end
 
-  def fix_plural_keys(key, value, locale)
+  def fix_plural_keys(key, value, locale, only_selected_locale = false)
     value = value.with_indifferent_access
     plural_keys = I18n.with_locale(locale) { I18n.t("i18n.plural.keys") }
     return value if value.keys.size == plural_keys.size && plural_keys.all? { |k| value.key?(k) }
@@ -228,6 +262,7 @@ class Admin::SiteTextsController < Admin::AdminController
     fallback_value = I18n.t(key, locale: :en, default: {})
     plural_keys.map do |k|
       if value[k]
+        value[k] = I18n.with_locale(locale) { I18n.t("#{key}.#{k}") } if only_selected_locale
         [k, value[k], locale]
       else
         [k, fallback_value[k] || fallback_value[:other], :en]

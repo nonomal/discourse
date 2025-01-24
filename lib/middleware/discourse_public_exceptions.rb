@@ -4,6 +4,12 @@
 # we need to handle certain exceptions here
 module Middleware
   class DiscoursePublicExceptions < ::ActionDispatch::PublicExceptions
+    # These middlewares will be re-run when the exception response is generated
+    EXCEPTION_RESPONSE_MIDDLEWARES = [
+      ContentSecurityPolicy::Middleware,
+      Middleware::CspScriptNonceInjector,
+    ]
+
     INVALID_REQUEST_ERRORS =
       Set.new(
         [
@@ -13,10 +19,6 @@ module Middleware
           ActionController::RoutingError,
         ],
       )
-
-    def initialize(path)
-      super
-    end
 
     def call(env)
       # this is so so gnarly
@@ -32,7 +34,7 @@ module Middleware
       if exception
         begin
           fake_controller = ApplicationController.new
-          fake_controller.response = response
+          fake_controller.set_response!(response)
           fake_controller.request = request = ActionDispatch::Request.new(env)
 
           # We can not re-dispatch bad mime types
@@ -49,18 +51,25 @@ module Middleware
           # Or badly formatted multipart requests
           begin
             request.POST
-          rescue EOFError
-            return [
-              400,
-              { "Cache-Control" => "private, max-age=0, must-revalidate" },
-              ["Invalid request"]
-            ]
+          rescue ActionController::BadRequest => error
+            if error.cause.is_a?(EOFError)
+              return [
+                400,
+                { "Cache-Control" => "private, max-age=0, must-revalidate" },
+                ["Invalid request"]
+              ]
+            else
+              raise
+            end
           end
 
           if ApplicationController.rescue_with_handler(exception, object: fake_controller)
             body = response.body
             body = [body] if String === body
-            return response.status, response.headers, body
+            rack_response = [response.status, response.headers, body]
+            app = lambda { |env| rack_response }
+            EXCEPTION_RESPONSE_MIDDLEWARES.each { |middleware| app = middleware.new(app) }
+            return app.call(env)
           end
         rescue => e
           return super if INVALID_REQUEST_ERRORS.include?(e.class)

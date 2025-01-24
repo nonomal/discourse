@@ -1,20 +1,21 @@
 // Overrides for WCAG color schemes only
 
 // Global
-
 ::placeholder {
   color: var(--primary-medium);
   opacity: 1;
 }
 
+:root {
+  --bronze: #d38f42 !important;
+}
+
 html.discourse-no-touch {
-  .btn-default:not(.btn-flat, .btn-danger, .btn-primary),
-  .btn-icon:not(.btn-flat, .btn-danger, .btn-primary) {
-    &.btn-default {
-      .d-icon {
-        color: var(--primary-medium);
-      }
+  .btn-default {
+    .d-icon {
+      color: var(--primary-medium);
     }
+
     &:hover,
     &.btn-hover,
     &:focus {
@@ -23,25 +24,22 @@ html.discourse-no-touch {
       }
     }
   }
+
   .btn-primary .d-icon {
     color: var(--secondary);
   }
+
   .btn-icon.ok,
   .btn-icon.cancel,
-  .btn-danger:not(.btn-flat) {
+  .btn-danger:not(.btn-flat, .btn-transparent) {
     .d-icon {
       color: var(--secondary);
     }
   }
-  .btn-flat.delete.d-hover {
+
+  .btn-flat.delete.d-hover,
+  .btn-flat.delete:hover {
     background: var(--danger);
-  }
-  .menu-links-header {
-    .btn-icon:hover {
-      .d-icon {
-        color: var(--primary);
-      }
-    }
   }
 
   .select-kit.single-select .select-kit-header:focus {
@@ -57,7 +55,6 @@ html {
   }
 
   // Composer
-
   #reply-control .reply-to .reply-details .d-icon {
     opacity: 1;
     color: var(--primary-low-mid);
@@ -66,45 +63,44 @@ html {
   .d-editor-button-bar {
     .btn-icon.btn-default .d-icon {
       color: var(--primary-low-mid);
+
       .discourse-no-touch & {
         &:hover {
           color: var(--secondary);
         }
       }
     }
+
+    .btn-icon:not(.btn-flat, .btn-danger, .btn-primary):focus {
+      .d-icon {
+        color: currentcolor;
+      }
+    }
   }
 
   // Site header
-
   .menu-panel li a.widget-link:hover,
   .menu-panel li a.widget-link:focus,
   .menu-panel li.heading a.widget-link:hover,
   .menu-panel li.heading a.widget-link:focus {
     color: var(--primary);
     background-color: var(--highlight-medium);
+
     .d-icon {
       color: var(--primary);
     }
   }
 
-  div.menu-links-header button:hover,
-  div.menu-links-header button:focus {
-    background: var(--tertiary-high);
-  }
-
-  .menu-panel .panel-body-bottom .btn:hover {
+  .menu-panel .panel-body-bottom .btn:hover,
+  .menu-panel .panel-body-bottom .btn:focus {
     .d-icon {
       color: var(--primary);
     }
   }
 
-  .d-header-icons .d-icon {
+  .d-header-icons .d-icon,
+  .header-sidebar-toggle button .d-icon {
     color: var(--primary-low-mid);
-  }
-
-  .d-header-icons .icon:hover .d-icon,
-  .d-header-icons .icon:focus .d-icon {
-    color: var(--primary-high);
   }
 
   .d-header-icons .unread-notifications {
@@ -116,7 +112,6 @@ html {
   }
 
   // Topic list
-
   table th {
     color: var(--primary-high);
   }
@@ -137,6 +132,7 @@ html {
   .badge-notification.unread-posts {
     background: var(--tertiary);
   }
+
   .select-kit.dropdown-select-box.period-chooser
     .period-chooser-header
     h2.selected-name
@@ -147,14 +143,26 @@ html {
     color: var(--primary-high);
   }
 
-  // Posts
+  .topic-list .posters a:first-child .avatar.latest:not(.single) {
+    box-shadow: 0 0 0 2px var(--tertiary);
+  }
 
+  .topic-list .topic-list-item-separator .topic-list-data span {
+    color: var(--danger);
+  }
+
+  .discourse-tag.box {
+    background: var(--primary-very-low);
+  }
+
+  // Posts
   .discourse-no-touch .topic-body .actions .fade-out {
     opacity: 1;
   }
 
   .topic-body .reply-to-tab {
     color: var(--primary-medium);
+
     .d-icon {
       color: var(--primary-low-mid);
     }
@@ -164,13 +172,10 @@ html {
     .timeline-scrollarea {
       border-color: var(--primary-low-mid);
     }
+
     .timeline-handle {
       background: var(--primary-low-mid);
     }
-  }
-
-  .topic-map h4 {
-    color: var(--primary);
   }
 
   .quote-controls,
@@ -184,6 +189,7 @@ html {
       color: var(--tertiary);
     }
   }
+
   .meta .d-icon + .filename,
   .meta .informations {
     color: var(--secondary);
@@ -197,17 +203,13 @@ html {
     color: var(--primary-medium);
   }
 
-  .badge-notification.clicks {
+  a[data-clicks]::before,
+  a[data-clicks]::after {
     color: var(--primary-high);
   }
 
-  .topic-map {
-    background: transparent;
-  }
-
   // Post controls
-
-  .topic-admin-menu-button-container,
+  .topic-admin-menu,
   .timeline-controls {
     .btn .d-icon {
       // admin wrenches
@@ -221,12 +223,15 @@ html {
       button.create .d-icon {
         color: var(--primary-high-or-secondary-low);
       }
+
       button {
         &.d-hover,
+        &:hover,
         &:focus,
         &:active {
           background: var(--primary-medium);
           color: var(--secondary);
+
           .d-icon {
             color: var(--secondary);
           }
@@ -237,16 +242,20 @@ html {
         &.delete:focus {
           background: var(--danger);
           color: var(--secondary);
+
           .d-icon {
             color: var(--secondary);
           }
         }
+
         &.bookmark {
           &.bookmarked {
             .d-icon {
               color: var(--tertiary);
             }
-            &.d-hover {
+
+            &.d-hover,
+            &:hover {
               .d-icon {
                 color: var(--tertiary-medium);
               }
@@ -254,9 +263,11 @@ html {
           }
         }
       }
+
       .double-button .button-count {
         color: var(--primary-medium);
       }
+
       .double-button:hover {
         button,
         .d-icon,
@@ -268,10 +279,12 @@ html {
 
     .show-replies {
       color: var(--primary-medium);
+
       &:hover,
       &:focus {
         color: var(--secondary);
         background: var(--primary-medium);
+
         .d-icon {
           color: var(--secondary);
         }
@@ -280,7 +293,6 @@ html {
   }
 
   // Categories
-
   .list-cell,
   .table-heading,
   .category-list td,
@@ -288,8 +300,65 @@ html {
     color: var(--primary-medium);
   }
 
-  // Admin
+  .alert.alert-success a {
+    color: var(--primary);
+    text-decoration: underline;
+  }
 
+  .latest-topic-list .table-heading,
+  .top-topic-list .table-heading {
+    color: var(--primary-medium);
+  }
+
+  .latest-topic-list-item .topic-last-activity a,
+  .category-list .featured-topic a.last-posted-at,
+  .category-list .featured-topic a.last-posted-at:visited {
+    color: var(--primary-high-or-secondary-low);
+  }
+
+  .category-boxes .description {
+    color: var(--primary-med-or-secondary-med);
+  }
+
+  // User Preferences
+  .user-menu.revamped .quick-access-panel li.unread,
+  .user-menu.revamped .quick-access-panel li.pending {
+    background-color: var(--tertiary-very-low);
+  }
+
+  .user-main .deleted-posts {
+    color: var(--primary);
+  }
+
+  .user-main .flagged-posts {
+    color: dark-light-choose($primary, $secondary);
+  }
+
+  .uploaded-image-preview
+    .image-upload-controls
+    .image-uploader-lightbox-btn
+    .d-icon {
+    color: var(--primary);
+  }
+
+  .settings .setting .setting-value .uploaded-image-preview {
+    background-color: var(--primary-very-low);
+  }
+
+  // Notifications
+  .user-menu.revamped .tabs-list .btn .badge-notification {
+    background-color: dark-light-choose($tertiary-high, $tertiary);
+  }
+
+  .user-stream .notification.unread {
+    background-color: var(--tertiary-very-low);
+  }
+
+  .user-stream .time {
+    color: var(--primary-very-high);
+  }
+
+  // Admin Settings
   .admin-controls {
     .nav-pills > li > a:not(.active):hover {
       background: var(--primary-medium);
@@ -301,4 +370,67 @@ html {
   .d-editor-preview mark {
     background-color: yellow; // resets to browser default
   }
+
+  .settings .setting.overridden h3::before {
+    background-color: var(--tertiary);
+  }
+
+  .admin-controls .controls {
+    background: var(--primary-very-low);
+  }
+
+  // Dashboard
+  .user-metrics .table-cell.user-basic .label,
+  .user-metrics .table-cell.user-member .label,
+  .user-metrics .table-cell.user-leader .label {
+    color: dark-light-choose($primary, $secondary);
+  }
+
+  .admin-contents.admin-plugins td.version .commit-hash {
+    color: var(--primary-medium);
+  }
+
+  // Search
+  .search-container
+    .search-filters
+    details.search-advanced-additional-options
+    > summary {
+    color: var(--highlight-high);
+  }
+
+  .chat-notices__notice,
+  .chat-notices .chat-retention-reminder {
+    background-color: var(--tertiary-very-low);
+  }
+
+  // Review
+  .reviewable-item .reviewable-meta-data .created-at a {
+    color: var(--primary-medium);
+  }
+
+  .reviewable-item {
+    background: dark-light-choose($primary-very-low, $secondary-very-high);
+  }
+
+  .reviewable .status span.approved {
+    color: var(--success-hover);
+  }
+}
+
+// chat
+.no-touch
+  .chat-messages-container
+  .chat-message:hover
+  .chat-message-react-btn:hover {
+  .d-icon {
+    color: var(--primary) !important;
+  }
+}
+
+// sidebar
+.sidebar-wrapper
+  .sidebar-sections
+  .sidebar-section-link-suffix.icon.unread
+  svg {
+  color: var(--tertiary);
 }

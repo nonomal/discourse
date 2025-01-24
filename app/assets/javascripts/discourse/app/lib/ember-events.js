@@ -1,8 +1,7 @@
-// eslint-disable-next-line ember/no-classic-components
+import { EventDispatcher } from "@ember/-internals/views";
 import Component from "@ember/component";
 import EmberObject from "@ember/object";
 import { actionModifier } from "./ember-action-modifier";
-import Ember from "ember";
 
 /**
  * Classic Ember components (i.e. "@ember/component") rely upon "event
@@ -54,8 +53,7 @@ export function normalizeEmberEventHandling(app) {
  * runtime overhead.
  */
 function eliminateClassicEventDelegation() {
-  // eslint-disable-next-line no-undef
-  Ember.EventDispatcher.reopen({
+  EventDispatcher.reopen({
     events: {},
   });
 }
@@ -132,7 +130,7 @@ function rewireClassicComponentEvents(app) {
      * @param {string | typeof INTERNAL} name
      * @param {unknown[]} args
      */
-    trigger(name, ...args) {
+    _trigger(name, ...args) {
       if (name === INTERNAL) {
         if (this.element) {
           return this._super.call(this, ...args);
@@ -144,13 +142,11 @@ function rewireClassicComponentEvents(app) {
       }
     },
 
-    // eslint-disable-next-line ember/no-component-lifecycle-hooks
     didInsertElement() {
       this._super(...arguments);
       setupComponentEventListeners(this, allEventMethods);
     },
 
-    // eslint-disable-next-line ember/no-component-lifecycle-hooks
     willDestroyElement() {
       teardownComponentEventListeners(this);
       this._super(...arguments);

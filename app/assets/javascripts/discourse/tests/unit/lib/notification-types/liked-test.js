@@ -1,10 +1,11 @@
-import { module, test } from "qunit";
-import { NOTIFICATION_TYPES } from "discourse/tests/fixtures/concerns/notification-types";
-import { deepMerge } from "discourse-common/lib/object";
-import { createRenderDirector } from "discourse/tests/helpers/notification-types-helper";
-import Notification from "discourse/models/notification";
-import I18n from "I18n";
+import { getOwner } from "@ember/application";
 import { setupTest } from "ember-qunit";
+import { module, test } from "qunit";
+import { deepMerge } from "discourse/lib/object";
+import Notification from "discourse/models/notification";
+import { NOTIFICATION_TYPES } from "discourse/tests/fixtures/concerns/notification-types";
+import { createRenderDirector } from "discourse/tests/helpers/notification-types-helper";
+import { i18n } from "discourse-i18n";
 
 function getNotification(overrides = {}) {
   return Notification.create(
@@ -41,12 +42,12 @@ module("Unit | Notification Types | liked", function (hooks) {
     const director = createRenderDirector(
       notification,
       "liked",
-      this.siteSettings
+      getOwner(this).lookup("service:site-settings")
     );
     notification.data.count = 2;
     assert.strictEqual(
       director.label,
-      I18n.t("notifications.liked_by_2_users", {
+      i18n("notifications.liked_by_2_users", {
         username: "osama",
         username2: "shrek",
       }),
@@ -56,10 +57,9 @@ module("Unit | Notification Types | liked", function (hooks) {
     notification.data.count = 3;
     assert.strictEqual(
       director.label,
-      I18n.t("notifications.liked_by_multiple_users", {
+      i18n("notifications.liked_by_multiple_users", {
         username: "osama",
-        username2: "shrek",
-        count: 1,
+        count: 2,
       }),
       "concatenates 2 usernames with comma and displays the remaining count when count larger than 2"
     );

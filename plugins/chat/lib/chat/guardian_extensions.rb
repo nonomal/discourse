@@ -13,7 +13,11 @@ module Chat
 
     def can_chat?
       return false if anonymous?
-      @user.staff? || @user.in_any_groups?(Chat.allowed_group_ids)
+      @user.bot? || @user.in_any_groups?(Chat.allowed_group_ids)
+    end
+
+    def can_direct_message?
+      @user.in_any_groups?(SiteSetting.direct_message_enabled_groups_map)
     end
 
     def can_create_chat_message?
@@ -21,7 +25,7 @@ module Chat
     end
 
     def can_create_direct_message?
-      is_staff? || @user.in_any_groups?(SiteSetting.direct_message_enabled_groups_map)
+      is_staff? || can_direct_message?
     end
 
     def hidden_tag_names
@@ -38,8 +42,19 @@ module Chat
 
     # Channel status intentionally has no bearing on whether the channel
     # name and description can be edited.
-    def can_edit_chat_channel?
-      is_staff?
+    def can_edit_chat_channel?(channel)
+      if channel.direct_message_channel?
+        is_staff? || channel.chatable.user_can_access?(@user)
+      elsif channel.category_channel?
+        is_staff?
+      end
+    end
+
+    # The only part of the thread that can be changed is the title
+    # so this isn't too dangerous, if we end up wanting to change
+    # more things in future we may want to re-evaluate to be staff-only here.
+    def can_edit_thread?(thread)
+      is_staff? || thread.original_message_user_id == @user.id
     end
 
     def can_move_chat_messages?(channel)
@@ -83,7 +98,7 @@ module Chat
     end
 
     def can_preview_chat_channel?(chat_channel)
-      return false unless chat_channel.chatable
+      return false if !chat_channel&.chatable
 
       if chat_channel.direct_message_channel?
         chat_channel.chatable.user_can_access?(@user)
@@ -94,23 +109,44 @@ module Chat
       end
     end
 
-    def can_join_chat_channel?(chat_channel)
+    def can_join_chat_channel?(chat_channel, post_allowed_category_ids: nil)
       return false if anonymous?
+      return false unless can_chat?
       can_preview_chat_channel?(chat_channel) &&
-        (chat_channel.direct_message_channel? || can_post_in_category?(chat_channel.chatable))
+        can_post_in_chatable?(
+          chat_channel.chatable,
+          post_allowed_category_ids: post_allowed_category_ids,
+        )
+    end
+
+    def can_post_in_chatable?(chatable, post_allowed_category_ids: nil)
+      case chatable
+      when Category
+        # technically when fetching channels in channel_fetcher we alread scope it to
+        # categories with post_create_allowed(guardian) so this is redundant but still
+        # valuable to have here when we're not fetching channels through channel_fetcher
+        if post_allowed_category_ids
+          return false unless chatable
+          return false if is_anonymous?
+          return true if is_admin?
+          post_allowed_category_ids.include?(chatable.id)
+        else
+          can_post_in_category?(chatable)
+        end
+      when Chat::DirectMessage
+        true
+      end
     end
 
     def can_flag_chat_messages?
       return false if @user.silenced?
-      return true if @user.staff?
-
       @user.in_any_groups?(SiteSetting.chat_message_flag_allowed_groups_map)
     end
 
-    def can_flag_in_chat_channel?(chat_channel)
+    def can_flag_in_chat_channel?(chat_channel, post_allowed_category_ids: nil)
       return false if !can_modify_channel_message?(chat_channel)
 
-      can_join_chat_channel?(chat_channel)
+      can_join_chat_channel?(chat_channel, post_allowed_category_ids: post_allowed_category_ids)
     end
 
     def can_flag_chat_message?(chat_message)
@@ -165,9 +201,9 @@ module Chat
       if message.user_id == current_user.id
         case chatable
         when Category
-          return can_see_category?(chatable)
+          return message.deleted_by_id == current_user.id || can_see_category?(chatable)
         when Chat::DirectMessage
-          return true
+          return message.deleted_by_id == current_user.id || is_staff?
         end
       end
 
@@ -179,7 +215,7 @@ module Chat
     end
 
     def can_edit_chat?(message)
-      message.user_id == @user.id && !@user.silenced?
+      (message.user_id == @user.id && !@user.silenced?) || is_admin?
     end
 
     def can_react?

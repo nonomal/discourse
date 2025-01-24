@@ -46,6 +46,7 @@ class SearchController < ApplicationController
 
     search_args[:search_type] = :full_page
     search_args[:ip_address] = request.remote_ip
+    search_args[:user_agent] = request.user_agent
     search_args[:user_id] = current_user.id if current_user.present?
 
     if rate_limit_search
@@ -99,6 +100,7 @@ class SearchController < ApplicationController
 
     search_args[:search_type] = :header
     search_args[:ip_address] = request.remote_ip
+    search_args[:user_agent] = request.user_agent
     search_args[:user_id] = current_user.id if current_user.present?
     search_args[:restrict_to_archetype] = params[:restrict_to_archetype] if params[
       :restrict_to_archetype
@@ -215,12 +217,12 @@ class SearchController < ApplicationController
     search_context = params[:search_context]
     unless search_context
       if (context = params[:context]) && (id = params[:context_id])
-        search_context = { type: context, id: id }
+        search_context = { type: context, id: id, name: id }
       end
     end
 
     if search_context.present?
-      unless SearchController.valid_context_types.include?(search_context[:type])
+      if SearchController.valid_context_types.exclude?(search_context[:type])
         raise Discourse::InvalidParameters.new(:search_context)
       end
       raise Discourse::InvalidParameters.new(:search_context) if search_context[:id].blank?
@@ -234,7 +236,9 @@ class SearchController < ApplicationController
       elsif "topic" == search_context[:type]
         context_obj = Topic.find_by(id: search_context[:id].to_i)
       elsif "tag" == search_context[:type]
-        context_obj = Tag.where_name(search_context[:name]).first
+        if !DiscourseTagging.hidden_tag_names(guardian).include?(search_context[:id])
+          context_obj = Tag.where_name(search_context[:id]).first
+        end
       end
 
       type_filter = nil

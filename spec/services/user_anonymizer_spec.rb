@@ -4,10 +4,11 @@ RSpec.describe UserAnonymizer do
   let(:admin) { Fabricate(:admin) }
 
   describe "event" do
-    let(:user) { Fabricate(:user, username: "edward") }
     subject(:make_anonymous) do
       described_class.make_anonymous(user, admin, anonymize_ip: "2.2.2.2")
     end
+
+    let(:user) { Fabricate(:user, username: "edward") }
 
     it "triggers the event" do
       events = DiscourseEvent.track_events { make_anonymous }
@@ -22,10 +23,11 @@ RSpec.describe UserAnonymizer do
   end
 
   describe ".make_anonymous" do
+    subject(:make_anonymous) { described_class.make_anonymous(user, admin) }
+
     let(:original_email) { "edward@example.net" }
     let(:user) { Fabricate(:user, username: "edward", email: original_email) }
     fab!(:another_user) { Fabricate(:evil_trout) }
-    subject(:make_anonymous) { described_class.make_anonymous(user, admin) }
 
     it "changes username" do
       make_anonymous
@@ -35,6 +37,14 @@ RSpec.describe UserAnonymizer do
     it "changes the primary email address" do
       make_anonymous
       expect(user.reload.email).to eq("#{user.username}@anonymized.invalid")
+    end
+
+    it "changes the primary email normalized email address" do
+      make_anonymous
+
+      primary_email = user.reload.primary_email
+
+      expect(primary_email.normalized_email).to eq("#{user.username}@anonymized.invalid")
     end
 
     it "changes the primary email address when there is an email domain allowlist" do
@@ -66,7 +76,7 @@ RSpec.describe UserAnonymizer do
     end
 
     context "when Site Settings do not require full name" do
-      before { SiteSetting.full_name_required = false }
+      before { SiteSetting.full_name_requirement = "optional_at_signup" }
 
       it "resets profile to default values" do
         user.update!(name: "Bibi", date_of_birth: 19.years.ago, title: "Super Star")
@@ -107,8 +117,17 @@ RSpec.describe UserAnonymizer do
       end
     end
 
+    it "clears existing user status" do
+      user_status = Fabricate(:user_status, user: user)
+
+      expect do
+        make_anonymous
+        user.reload
+      end.to change { user.user_status }.from(user_status).to(nil)
+    end
+
     context "when Site Settings require full name" do
-      before { SiteSetting.full_name_required = true }
+      before { SiteSetting.full_name_requirement = "required_at_signup" }
 
       it "changes name to anonymized username" do
         prev_username = user.username
@@ -153,12 +172,12 @@ RSpec.describe UserAnonymizer do
         [/quote]
       RAW
 
-      old_avatar_url = user.avatar_template.gsub("{size}", "40")
+      old_avatar_url = user.avatar_template.gsub("{size}", "48")
       expect(post.cooked).to include(old_avatar_url)
 
       make_anonymous
       post.reload
-      new_avatar_url = user.reload.avatar_template.gsub("{size}", "40")
+      new_avatar_url = user.reload.avatar_template.gsub("{size}", "48")
 
       expect(post.cooked).to_not include(old_avatar_url)
       expect(post.cooked).to include(new_avatar_url)
@@ -310,7 +329,7 @@ RSpec.describe UserAnonymizer do
     let(:old_ip) { "1.2.3.4" }
     let(:anon_ip) { "0.0.0.0" }
     let(:user) { Fabricate(:user, ip_address: old_ip, registration_ip_address: old_ip) }
-    fab!(:post) { Fabricate(:post) }
+    fab!(:post)
     let(:topic) { post.topic }
 
     it "doesn't anonymize ips by default" do

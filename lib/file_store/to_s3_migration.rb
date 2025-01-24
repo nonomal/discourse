@@ -6,20 +6,14 @@ module FileStore
   ToS3MigrationError = Class.new(RuntimeError)
 
   class ToS3Migration
-    MISSING_UPLOADS_RAKE_TASK_NAME ||= "posts:missing_uploads"
-    UPLOAD_CONCURRENCY ||= 20
+    MISSING_UPLOADS_RAKE_TASK_NAME = "posts:missing_uploads"
+    UPLOAD_CONCURRENCY = 20
 
-    def initialize(
-      s3_options:,
-      dry_run: false,
-      migrate_to_multisite: false,
-      skip_etag_verify: false
-    )
+    def initialize(s3_options:, dry_run: false, migrate_to_multisite: false)
       @s3_bucket = s3_options[:bucket]
       @s3_client_options = s3_options[:client_options]
       @dry_run = dry_run
       @migrate_to_multisite = migrate_to_multisite
-      @skip_etag_verify = skip_etag_verify
       @current_db = RailsMultisite::ConnectionManagement.current_db
     end
 
@@ -217,7 +211,8 @@ module FileStore
         UPLOAD_CONCURRENCY.times.map do
           Thread.new do
             while obj = queue.pop
-              if s3.put_object(obj[:options]).etag[obj[:etag]]
+              opts_with_file = obj[:options].merge(body: File.open(obj[:path], "rb"))
+              if s3.put_object(opts_with_file)
                 putc "."
                 lock.synchronize { synced += 1 }
               else
@@ -231,20 +226,21 @@ module FileStore
       local_files.each do |file|
         path = File.join(public_directory, file)
         name = File.basename(path)
-        etag = Digest::MD5.file(path).hexdigest unless @skip_etag_verify
+        content_md5 = Digest::MD5.file(path).base64digest
         key = file[file.index(prefix)..-1]
         key.prepend(folder) if bucket_has_folder_path
         original_path = file.sub("uploads/#{@current_db}", "")
 
-        if s3_object = s3_objects.find { |obj| obj.key.ends_with?(original_path) }
-          next if File.size(path) == s3_object.size && (@skip_etag_verify || s3_object.etag[etag])
+        if (s3_object = s3_objects.find { |obj| obj.key.ends_with?(original_path) }) &&
+             File.size(path) == s3_object.size
+          next
         end
 
         options = {
-          acl: "public-read",
-          body: File.open(path, "rb"),
+          acl: SiteSetting.s3_use_acls ? "public-read" : nil,
           bucket: bucket,
           content_type: MiniMime.lookup_by_filename(name)&.content_type,
+          content_md5: content_md5,
           key: key,
         }
 
@@ -259,7 +255,7 @@ module FileStore
           end
 
           options[:acl] = "private" if upload&.secure
-        elsif !FileHelper.is_inline_image?(name)
+        elsif !FileHelper.is_svg?(name)
           upload = Upload.find_by(url: "/#{file}")
           options[:content_disposition] = ActionDispatch::Http::ContentDisposition.format(
             disposition: "attachment",
@@ -267,13 +263,11 @@ module FileStore
           )
         end
 
-        etag ||= Digest::MD5.file(path).hexdigest
-
         if @dry_run
           log "#{file} => #{options[:key]}"
           synced += 1
         else
-          queue << { path: path, options: options, etag: etag }
+          queue << { path: path, options: options, content_md5: content_md5 }
         end
       end
 

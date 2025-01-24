@@ -1,10 +1,13 @@
 # frozen_string_literal: true
 
 module FileStore
+  class DownloadError < StandardError
+  end
+
   class BaseStore
-    UPLOAD_PATH_REGEX ||= %r{/(original/\d+X/.*)}
-    OPTIMIZED_IMAGE_PATH_REGEX ||= %r{/(optimized/\d+X/.*)}
-    TEMPORARY_UPLOAD_PREFIX ||= "temp/"
+    UPLOAD_PATH_REGEX = %r{/(original/\d+X/.*)}
+    OPTIMIZED_IMAGE_PATH_REGEX = %r{/(optimized/\d+X/.*)}
+    TEMPORARY_UPLOAD_PREFIX = "temp/"
 
     def store_upload(file, upload, content_type = nil)
       upload.url = nil
@@ -88,7 +91,20 @@ module FileStore
       not_implemented
     end
 
-    def download(object, max_file_size_kb: nil)
+    # TODO: Remove when #download becomes the canonical safe version.
+    def download_safe(*, **)
+      download(*, **, print_deprecation: false)
+    rescue StandardError
+      nil
+    end
+
+    def download!(*, **)
+      download(*, **, print_deprecation: false)
+    rescue StandardError
+      raise DownloadError
+    end
+
+    def download(object, max_file_size_kb: nil, print_deprecation: true)
       DistributedMutex.synchronize("download_#{object.sha1}", validity: 3.minutes) do
         extension =
           File.extname(
@@ -173,8 +189,8 @@ module FileStore
       get_path_for("optimized", upload.id, upload.sha1, extension)
     end
 
-    CACHE_DIR ||= "#{Rails.root}/tmp/download_cache/"
-    CACHE_MAXIMUM_SIZE ||= 500
+    CACHE_DIR = "#{Rails.root}/tmp/download_cache/"
+    CACHE_MAXIMUM_SIZE = 500
 
     def get_cache_path_for(filename)
       "#{CACHE_DIR}#{filename}"

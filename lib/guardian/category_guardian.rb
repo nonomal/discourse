@@ -39,7 +39,7 @@ module CategoryGuardian
 
   def can_see_category?(category)
     return false unless category
-    return true if is_admin?
+    return true if is_admin? && !SiteSetting.suppress_secured_categories_from_admin
     return true if !category.read_restricted
     return true if is_staged? && category.email_in.present? && category.email_in_allow_strangers
     secure_category_ids.include?(category.id)
@@ -49,7 +49,6 @@ module CategoryGuardian
     return false unless category
     return false if is_anonymous?
     return true if is_admin?
-    return true if !category.read_restricted
     Category.post_create_allowed(self).exists?(id: category.id)
   end
 
@@ -68,10 +67,6 @@ module CategoryGuardian
         unrestricted = Category.where(read_restricted: false).pluck(:id)
         unrestricted.concat(secure_category_ids)
       end
-  end
-
-  def topic_create_allowed_category_ids
-    @topic_create_allowed_category_ids ||= @user.topic_create_allowed_category_ids
   end
 
   def topic_featured_link_allowed_category_ids

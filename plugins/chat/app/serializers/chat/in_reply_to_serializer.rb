@@ -7,12 +7,12 @@ module Chat
 
     attributes :id, :cooked, :excerpt
 
-    def excerpt
-      WordWatcher.censor(object.excerpt)
+    def user
+      object.user || Chat::NullUser.new
     end
 
-    def user
-      object.user || Chat::DeletedUser.new
+    def excerpt
+      object.excerpt || object.build_excerpt
     end
   end
 end

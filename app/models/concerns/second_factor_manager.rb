@@ -38,7 +38,7 @@ module SecondFactorManager
   end
 
   def authenticate_totp(token)
-    totps = self&.user_second_factors.totps
+    totps = self.user_second_factors&.totps
     authenticated = false
     totps.each do |totp|
       last_used = 0
@@ -64,20 +64,20 @@ module SecondFactorManager
 
   def totp_enabled?
     !SiteSetting.enable_discourse_connect && SiteSetting.enable_local_logins &&
-      self&.user_second_factors.totps.exists?
+      self.user_second_factors&.totps&.exists?
   end
 
   def backup_codes_enabled?
     !SiteSetting.enable_discourse_connect && SiteSetting.enable_local_logins &&
-      self&.user_second_factors.backup_codes.exists?
+      self.user_second_factors&.backup_codes&.exists?
   end
 
   def security_keys_enabled?
     !SiteSetting.enable_discourse_connect && SiteSetting.enable_local_logins &&
       self
-        &.security_keys
-        .where(factor_type: UserSecurityKey.factor_types[:second_factor], enabled: true)
-        .exists?
+        .security_keys
+        &.where(factor_type: UserSecurityKey.factor_types[:second_factor], enabled: true)
+        &.exists?
   end
 
   def has_any_second_factor_methods_enabled?
@@ -101,7 +101,7 @@ module SecondFactorManager
   end
 
   def remaining_backup_codes
-    self&.user_second_factors&.backup_codes&.count
+    self.user_second_factors&.backup_codes&.count
   end
 
   def authenticate_second_factor(params, secure_session)
@@ -146,7 +146,7 @@ module SecondFactorManager
     # if we have gotten down to this point without being
     # OK or invalid something has gone very weird.
     invalid_second_factor_method_result
-  rescue ::Webauthn::SecurityKeyError => err
+  rescue ::DiscourseWebauthn::SecurityKeyError => err
     invalid_security_key_result(err.message)
   end
 
@@ -163,12 +163,11 @@ module SecondFactorManager
   end
 
   def authenticate_security_key(secure_session, security_key_credential)
-    ::Webauthn::SecurityKeyAuthenticationService.new(
+    ::DiscourseWebauthn::AuthenticationService.new(
       self,
       security_key_credential,
-      challenge: Webauthn.challenge(self, secure_session),
-      rp_id: Webauthn.rp_id(self, secure_session),
-      origin: Discourse.base_url,
+      session: secure_session,
+      factor_type: UserSecurityKey.factor_types[:second_factor],
     ).authenticate_security_key
   end
 
@@ -245,7 +244,7 @@ module SecondFactorManager
 
   def authenticate_backup_code(backup_code)
     if !backup_code.blank?
-      codes = self&.user_second_factors&.backup_codes
+      codes = self.user_second_factors&.backup_codes
 
       codes.each do |code|
         parsed_data = JSON.parse(code.data)
@@ -263,12 +262,10 @@ module SecondFactorManager
   end
 
   def hash_backup_code(code, salt)
-    Pbkdf2.hash_password(
-      code,
-      salt,
-      Rails.configuration.pbkdf2_iterations,
-      Rails.configuration.pbkdf2_algorithm,
-    )
+    # Backup codes have high entropy, so we can afford to use
+    # a lower number of iterations than for user-specific passwords
+    iterations = Rails.env.test? ? 10 : 64_000
+    Pbkdf2.hash_password(code, salt, iterations, "sha256")
   end
 
   def require_rotp

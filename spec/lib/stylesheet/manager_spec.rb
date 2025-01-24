@@ -481,30 +481,7 @@ RSpec.describe Stylesheet::Manager do
   end
 
   describe "color_scheme_digest" do
-    fab!(:theme) { Fabricate(:theme) }
-
-    it "changes with category background image" do
-      category1 = Fabricate(:category, uploaded_background_id: 123, updated_at: 1.week.ago)
-      category2 = Fabricate(:category, uploaded_background_id: 456, updated_at: 2.days.ago)
-
-      manager = manager(theme.id)
-
-      builder =
-        Stylesheet::Manager::Builder.new(target: :desktop_theme, theme: theme, manager: manager)
-
-      digest1 = builder.color_scheme_digest
-
-      category2.update!(uploaded_background_id: 789, updated_at: 1.day.ago)
-
-      digest2 = builder.color_scheme_digest
-      expect(digest2).to_not eq(digest1)
-
-      category1.update!(uploaded_background_id: nil, updated_at: 5.minutes.ago)
-
-      digest3 = builder.color_scheme_digest
-      expect(digest3).to_not eq(digest2)
-      expect(digest3).to_not eq(digest1)
-    end
+    fab!(:theme)
 
     it "updates digest when updating a color scheme" do
       scheme = ColorScheme.create_from_base(name: "Neutral", base_scheme_id: "Neutral")
@@ -681,7 +658,7 @@ RSpec.describe Stylesheet::Manager do
         ).compile(force: true)
 
       expect(stylesheet).not_to include("--primary: #CC0000;")
-      expect(stylesheet).to include("--primary: #222222;") # from base scheme
+      expect(stylesheet).to include("--primary: #222;") # from base scheme
     end
 
     it "uses the correct scheme when a valid scheme id is used" do
@@ -697,6 +674,73 @@ RSpec.describe Stylesheet::Manager do
 
       link = manager.color_scheme_stylesheet_link_tag
       expect(link).to include("/stylesheets/color_definitions_funky-bunch_#{cs.id}_")
+    end
+
+    it "generates the dark mode of a color scheme when the dark option is specified" do
+      scheme = ColorScheme.create_from_base(name: "Neutral", base_scheme_id: "Neutral")
+      ColorSchemeRevisor.revise(
+        scheme,
+        colors: [{ name: "primary", hex: "CABFAF", dark_hex: "FAFCAB" }],
+      )
+      theme = Fabricate(:theme)
+      manager = manager(theme.id)
+
+      dark_stylesheet =
+        Stylesheet::Manager::Builder.new(
+          target: :color_definitions,
+          theme: theme,
+          color_scheme: scheme,
+          manager: manager,
+          dark: true,
+        ).compile
+      light_stylesheet =
+        Stylesheet::Manager::Builder.new(
+          target: :color_definitions,
+          theme: theme,
+          color_scheme: scheme,
+          manager: manager,
+        ).compile
+
+      expect(light_stylesheet).to include("--primary: #CABFAF;")
+      expect(light_stylesheet).to include("color_definitions_neutral_#{scheme.id}_#{theme.id}")
+      expect(light_stylesheet).not_to include(
+        "color_definitions_neutral_#{scheme.id}_#{theme.id}_dark",
+      )
+
+      expect(dark_stylesheet).to include("--primary: #FAFCAB;")
+      expect(dark_stylesheet).to include("color_definitions_neutral_#{scheme.id}_#{theme.id}_dark")
+    end
+
+    it "uses the light colors as fallback if the dark scheme doesn't define them" do
+      scheme = ColorScheme.create_from_base(name: "Neutral", base_scheme_id: "Neutral")
+      ColorSchemeRevisor.revise(scheme, colors: [{ name: "primary", hex: "BACFAB", dark_hex: nil }])
+      theme = Fabricate(:theme)
+      manager = manager(theme.id)
+
+      dark_stylesheet =
+        Stylesheet::Manager::Builder.new(
+          target: :color_definitions,
+          theme: theme,
+          color_scheme: scheme,
+          manager: manager,
+          dark: true,
+        ).compile
+      light_stylesheet =
+        Stylesheet::Manager::Builder.new(
+          target: :color_definitions,
+          theme: theme,
+          color_scheme: scheme,
+          manager: manager,
+        ).compile
+
+      expect(light_stylesheet).to include("--primary: #BACFAB;")
+      expect(light_stylesheet).to include("color_definitions_neutral_#{scheme.id}_#{theme.id}")
+      expect(light_stylesheet).not_to include(
+        "color_definitions_neutral_#{scheme.id}_#{theme.id}_dark",
+      )
+
+      expect(dark_stylesheet).to include("--primary: #BACFAB;")
+      expect(dark_stylesheet).to include("color_definitions_neutral_#{scheme.id}_#{theme.id}_dark")
     end
 
     it "updates outputted colors when updating a color scheme" do
@@ -877,92 +921,82 @@ RSpec.describe Stylesheet::Manager do
     end
   end
 
-  describe ".precompile css" do
+  describe ".precompile_css" do
+    let(:core_targets) do
+      %w[desktop mobile admin wizard desktop_rtl mobile_rtl admin_rtl wizard_rtl]
+    end
+
+    let(:theme_targets) { %i[desktop_theme mobile_theme] }
+
     before do
-      class << STDERR
-        alias_method :orig_write, :write
-        def write(x)
-        end
-      end
+      STDERR.stubs(:write)
+      StylesheetCache.destroy_all
+      default_theme.set_default!
     end
 
     after do
-      class << STDERR
-        def write(x)
-          orig_write(x)
-        end
-      end
-      FileUtils.rm_rf("tmp/stylesheet-cache")
+      STDERR.unstub(:write)
+      Stylesheet::Manager.rm_cache_folder
     end
 
-    it "correctly generates precompiled CSS" do
-      scheme1 = ColorScheme.create!(name: "scheme1")
-      scheme2 = ColorScheme.create!(name: "scheme2")
-      core_targets = %i[desktop mobile desktop_rtl mobile_rtl admin wizard]
-      theme_targets = %i[desktop_theme mobile_theme]
+    fab!(:scheme1) { ColorScheme.create!(name: "scheme1") }
+    fab!(:scheme2) { ColorScheme.create!(name: "scheme2") }
 
-      Theme.update_all(user_selectable: false)
-      user_theme = Fabricate(:theme, user_selectable: true, color_scheme: scheme1)
-      default_theme = Fabricate(:theme, user_selectable: true, color_scheme: scheme2)
+    fab!(:user_theme) { Fabricate(:theme, user_selectable: true, color_scheme: scheme1) }
+    fab!(:default_theme) { Fabricate(:theme, user_selectable: true, color_scheme: scheme2) }
+    fab!(:child_theme) do
+      Fabricate(:theme).tap do |t|
+        t.component = true
+        t.save!
+        user_theme.add_relative_theme!(:child, t)
+      end
+    end
+    fab!(:child_theme_with_css) do
+      Fabricate(:theme).tap do |t|
+        t.component = true
+        t.set_field(target: :common, name: :scss, value: "body { background: green }")
+        t.save!
+        user_theme.add_relative_theme!(:child, t)
+        default_theme.add_relative_theme!(:child, t)
+      end
+    end
 
-      child_theme =
-        Fabricate(:theme).tap do |t|
-          t.component = true
-          t.save!
-          user_theme.add_relative_theme!(:child, t)
-        end
+    it "generates precompiled CSS - only core" do
+      capture_output(:stderr) { Stylesheet::Manager.precompile_css }
 
-      child_theme_with_css =
-        Fabricate(:theme).tap do |t|
-          t.component = true
+      expect(StylesheetCache.pluck(:target)).to contain_exactly(*core_targets)
+    end
 
-          t.set_field(target: :common, name: :scss, value: "body { background: green }")
-
-          t.save!
-
-          user_theme.add_relative_theme!(:child, t)
-          default_theme.add_relative_theme!(:child, t)
-        end
-
-      default_theme.set_default!
-
-      StylesheetCache.destroy_all
-
-      # only core
-      output = capture_output(:stderr) { Stylesheet::Manager.precompile_css }
-
-      results = StylesheetCache.pluck(:target)
-      expect(results.size).to eq(core_targets.size)
-
-      StylesheetCache.destroy_all
-
-      # only themes
+    it "generates precompiled CSS - only themes" do
       output = capture_output(:stderr) { Stylesheet::Manager.precompile_theme_css }
 
       # Ensure we force compile each theme only once
       expect(output.scan(/#{child_theme_with_css.name}/).length).to eq(2)
-      results = StylesheetCache.pluck(:target)
-      expect(results.size).to eq(22) # (3 themes * 2 targets) + 16 color schemes (2 themes * 8 color schemes (7 defaults + 1 theme scheme))
+      expect(StylesheetCache.count).to eq(38) # (3 themes * 2 targets) + 32 color schemes (2 themes * 8 color schemes (7 defaults + 1 theme scheme) * 2 (light and dark mode per scheme))
+    end
 
-      # themes + core
+    it "generates precompiled CSS - core and themes" do
       Stylesheet::Manager.precompile_css
+      Stylesheet::Manager.precompile_theme_css
+
       results = StylesheetCache.pluck(:target)
-      expect(results.size).to eq(28) # 9 core targets + 9 theme + 10 color schemes
+      expect(results.size).to eq(46) # 8 core targets + 6 theme + 32 color schemes (light and dark mode per scheme)
 
       theme_targets.each do |tar|
         expect(
           results.count { |target| target =~ /^#{tar}_(#{user_theme.id}|#{default_theme.id})$/ },
         ).to eq(2)
       end
+    end
 
+    it "correctly generates precompiled CSS - core and themes and no default theme" do
       Theme.clear_default!
-      StylesheetCache.destroy_all
 
-      # themes + core with no theme set as default
       Stylesheet::Manager.precompile_css
       Stylesheet::Manager.precompile_theme_css
+
       results = StylesheetCache.pluck(:target)
-      expect(results.size).to eq(28) # 9 core targets + 9 theme + 10 color schemes
+      expect(results.size).to eq(46) # 8 core targets + 6 theme + 32 color schemes (light and dark mode per scheme)
 
       expect(results).to include("color_definitions_#{scheme1.name}_#{scheme1.id}_#{user_theme.id}")
       expect(results).to include(
@@ -978,34 +1012,24 @@ RSpec.describe Stylesheet::Manager do
       image = file_from_fixtures("logo.png")
       upload = UploadCreator.new(image, "logo.png").create_for(-1)
 
-      scheme = ColorScheme.create!(name: "scheme")
-      core_targets = %i[desktop mobile desktop_rtl mobile_rtl admin wizard]
-      theme_targets = %i[desktop_theme mobile_theme]
+      ThemeField.create!(
+        theme_id: default_theme.id,
+        target_id: Theme.targets[:common],
+        name: "logo",
+        value: "",
+        upload_id: upload.id,
+        type_id: ThemeField.types[:theme_upload_var],
+      )
 
-      default_theme =
-        Fabricate(:theme, color_scheme: scheme).tap do |t|
-          field =
-            ThemeField.create!(
-              theme_id: t.id,
-              target_id: Theme.targets[:common],
-              name: "logo",
-              value: "",
-              upload_id: upload.id,
-              type_id: ThemeField.types[:theme_upload_var],
-            )
+      default_theme.set_field(
+        target: :common,
+        name: :scss,
+        value: "body { background: url($logo); border: 3px solid green; }",
+      )
 
-          t.set_field(
-            target: :common,
-            name: :scss,
-            value: "body { background: url($logo); border: 3px solid green; }",
-          )
+      default_theme.save!
 
-          t.save!
-        end
-
-      default_theme.set_default!
       upload.destroy!
-      StylesheetCache.destroy_all
 
       Stylesheet::Manager.precompile_theme_css
 
@@ -1019,11 +1043,74 @@ RSpec.describe Stylesheet::Manager do
       css = File.read(theme_builder.stylesheet_fullpath)
       expect(css).to include("border:3px solid green}")
     end
+
+    context "when there are enabled plugins" do
+      let(:plugin1) do
+        plugin1 = plugin_from_fixtures("my_plugin")
+        plugin1.register_css "body { padding: 1px 2px 3px 4px; }"
+        plugin1
+      end
+
+      let(:plugin2) do
+        plugin2 = plugin_from_fixtures("scss_plugin")
+        plugin2
+      end
+
+      before do
+        Discourse.plugins << plugin1
+        Discourse.plugins << plugin2
+        plugin1.activate!
+        plugin2.activate!
+        Stylesheet::Importer.register_imports!
+        StylesheetCache.destroy_all
+      end
+
+      after do
+        Discourse.plugins.delete(plugin1)
+        Discourse.plugins.delete(plugin2)
+        Stylesheet::Importer.register_imports!
+        DiscoursePluginRegistry.reset!
+      end
+
+      it "generates LTR and RTL CSS for plugins" do
+        output = capture_output(:stderr) { Stylesheet::Manager.precompile_css }
+
+        results = StylesheetCache.pluck(:target)
+        expect(results).to contain_exactly(
+          *core_targets,
+          "my_plugin",
+          "my_plugin_rtl",
+          "scss_plugin",
+          "scss_plugin_rtl",
+        )
+
+        expect(output.scan(/my_plugin$/).length).to eq(1)
+        expect(output.scan(/my_plugin_rtl$/).length).to eq(1)
+        expect(output.scan(/scss_plugin$/).length).to eq(1)
+        expect(output.scan(/scss_plugin_rtl$/).length).to eq(1)
+
+        plugin1_ltr_css = StylesheetCache.where(target: "my_plugin").pluck(:content).first
+        plugin1_rtl_css = StylesheetCache.where(target: "my_plugin_rtl").pluck(:content).first
+
+        expect(plugin1_ltr_css).to include("body{padding:1px 2px 3px 4px}")
+        expect(plugin1_ltr_css).not_to include("body{padding:1px 4px 3px 2px}")
+        expect(plugin1_rtl_css).to include("body{padding:1px 4px 3px 2px}")
+        expect(plugin1_rtl_css).not_to include("body{padding:1px 2px 3px 4px}")
+
+        plugin2_ltr_css = StylesheetCache.where(target: "scss_plugin").pluck(:content).first
+        plugin2_rtl_css = StylesheetCache.where(target: "scss_plugin_rtl").pluck(:content).first
+
+        expect(plugin2_ltr_css).to include(".pull-left{float:left}")
+        expect(plugin2_ltr_css).not_to include(".pull-left{float:right}")
+        expect(plugin2_rtl_css).to include(".pull-left{float:right}")
+        expect(plugin2_rtl_css).not_to include(".pull-left{float:left}")
+      end
+    end
   end
 
   describe ".fs_asset_cachebuster" do
     it "returns a number in test/development mode" do
-      expect(Stylesheet::Manager.fs_asset_cachebuster).to match(/\A[0-9]+:[0-9]+\z/)
+      expect(Stylesheet::Manager.fs_asset_cachebuster).to match(/\A.*:[0-9]+\z/)
     end
 
     context "with production mode enabled" do
@@ -1036,7 +1123,7 @@ RSpec.describe Stylesheet::Manager do
 
       it "returns a hash" do
         cachebuster = Stylesheet::Manager.fs_asset_cachebuster
-        expect(cachebuster).to match(/\A[0-9]+:[0-9a-f]{40}\z/)
+        expect(cachebuster).to match(/\A.*:[0-9a-f]{40}\z/)
       end
 
       it "caches the value on the filesystem" do

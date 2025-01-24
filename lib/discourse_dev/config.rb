@@ -16,7 +16,7 @@ module DiscourseDev
       if File.exist?(file_path)
         user_config = YAML.load_file(file_path, permitted_classes: [Date])
       else
-        puts "I did no detect a custom `config/dev.yml` file, creating one for you where you can amend defaults."
+        puts "Did not detect `config/dev.yml`, creating one for you where you can amend defaults."
         FileUtils.cp(default_file_path, file_path)
         user_config = {}
       end
@@ -116,7 +116,8 @@ module DiscourseDev
           puts "Once site is running use https://localhost:9292/user/#{username}/become to access the account in development"
         end
 
-        admin.name = ask("Full name:  ") if SiteSetting.full_name_required
+        admin.name = ask("Full name:  ") if SiteSetting.full_name_requirement ==
+          "required_at_signup"
         saved = admin.save
 
         if saved

@@ -1,14 +1,14 @@
+import { getOwner } from "@ember/owner";
+import { setupTest } from "ember-qunit";
 import { module, test } from "qunit";
 import Site from "discourse/models/site";
-import { getOwner } from "discourse-common/lib/get-owner";
-import { setupTest } from "ember-qunit";
 
 module("Unit | Model | site", function (hooks) {
   setupTest(hooks);
 
   test("create", function (assert) {
     const store = getOwner(this).lookup("service:store");
-    assert.ok(store.createRecord("site"), "it can create with no parameters");
+    assert.true(!!store.createRecord("site"), "can create with no parameters");
   });
 
   test("instance", function (assert) {
@@ -41,20 +41,6 @@ module("Unit | Model | site", function (hooks) {
       "Test",
       "Test Subcategory",
     ]);
-
-    const parent = site.categories.findBy("id", 1234);
-    assert.present(parent, "it loaded the parent category");
-    assert.blank(parent.parentCategory, "it has no parent category");
-
-    assert.strictEqual(parent.subcategories.length, 1);
-
-    const subcategory = site.categories.findBy("id", 3456);
-    assert.present(subcategory, "it loaded the subcategory");
-    assert.strictEqual(
-      subcategory.parentCategory,
-      parent,
-      "it has associated the child with the parent"
-    );
 
     // remove invalid category and child
     site.categories.removeObject(site.categories[2]);

@@ -6,7 +6,7 @@
     justify-content: space-between;
     background-color: var(--primary-very-low);
     padding: 1em;
-    border-radius: 6px;
+    border-radius: var(--d-border-radius-large);
     margin-bottom: 1em;
 
     &--details {
@@ -19,6 +19,7 @@
         font-size: var(--font-up-1);
       }
     }
+
     &--controls {
       display: inline-block;
       vertical-align: top;

@@ -40,7 +40,7 @@ class Admin::ThemesController < Admin::AdminController
     render json: { public_key: k.ssh_public_key }
   end
 
-  THEME_CONTENT_TYPES ||= %w[
+  THEME_CONTENT_TYPES = %w[
     application/gzip
     application/x-gzip
     application/x-zip-compressed
@@ -83,7 +83,7 @@ class Admin::ThemesController < Admin::AdminController
 
       if @theme.save
         log_theme_change(nil, @theme)
-        render json: @theme, status: :created
+        render json: serialize_data(@theme, ThemeSerializer), status: :created
       else
         render json: @theme.errors, status: :unprocessable_entity
       end
@@ -113,7 +113,7 @@ class Admin::ThemesController < Admin::AdminController
 
           @theme =
             RemoteTheme.import_theme(remote, theme_user, private_key: private_key, branch: branch)
-          render json: @theme, status: :created
+          render json: serialize_data(@theme, ThemeSerializer), status: :created
         rescue RemoteTheme::ImportError => e
           if params[:force]
             theme_name = params[:remote].gsub(/.git\z/, "").split("/").last
@@ -128,7 +128,7 @@ class Admin::ThemesController < Admin::AdminController
             @theme.remote_theme = remote_theme
             @theme.save!
 
-            render json: @theme, status: :created
+            render json: serialize_data(@theme, ThemeSerializer), status: :created
           else
             render_json_error e.message
           end
@@ -142,19 +142,21 @@ class Admin::ThemesController < Admin::AdminController
       bundle = params[:bundle] || params[:theme]
       theme_id = params[:theme_id]
       update_components = params[:components]
-      match_theme_by_name = !!params[:bundle] && !params.key?(:theme_id) # Old theme CLI behavior, match by name. Remove Jan 2020
+      run_migrations = !params[:skip_migrations]
+
       begin
         @theme =
           RemoteTheme.update_zipped_theme(
             bundle.path,
             bundle.original_filename,
-            match_theme: match_theme_by_name,
             user: theme_user,
-            theme_id: theme_id,
-            update_components: update_components,
+            theme_id:,
+            update_components:,
+            run_migrations:,
           )
+
         log_theme_change(nil, @theme)
-        render json: @theme, status: :created
+        render json: serialize_data(@theme, ThemeSerializer), status: :created
       rescue RemoteTheme::ImportError => e
         render_json_error e.message
       end
@@ -162,6 +164,8 @@ class Admin::ThemesController < Admin::AdminController
       render_json_error I18n.t("themes.import_error.unknown_file_type"),
                         status: :unprocessable_entity
     end
+  rescue Theme::SettingsMigrationError => err
+    render_json_error err.message
   end
 
   def index
@@ -169,10 +173,10 @@ class Admin::ThemesController < Admin::AdminController
     @color_schemes = ColorScheme.all.includes(:theme, color_scheme_colors: :color_scheme).to_a
 
     payload = {
-      themes: ActiveModel::ArraySerializer.new(@themes, each_serializer: ThemeSerializer),
+      themes: serialize_data(@themes, ThemeSerializer),
       extras: {
-        color_schemes:
-          ActiveModel::ArraySerializer.new(@color_schemes, each_serializer: ColorSchemeSerializer),
+        color_schemes: serialize_data(@color_schemes, ColorSchemeSerializer),
+        locale: current_user.effective_locale,
       },
     }
 
@@ -196,7 +200,7 @@ class Admin::ThemesController < Admin::AdminController
       if @theme.save
         update_default_theme
         log_theme_change(nil, @theme)
-        format.json { render json: @theme, status: :created }
+        format.json { render json: serialize_data(@theme, ThemeSerializer), status: :created }
       else
         format.json { render json: @theme.errors, status: :unprocessable_entity }
       end
@@ -215,13 +219,11 @@ class Admin::ThemesController < Admin::AdminController
       @theme.public_send("#{field}=", theme_params[field]) if theme_params.key?(field)
     end
 
-    if theme_params.key?(:child_theme_ids)
-      add_relative_themes!(:child, theme_params[:child_theme_ids])
-    end
+    @theme.child_theme_ids = theme_params[:child_theme_ids] if theme_params.key?(:child_theme_ids)
 
-    if theme_params.key?(:parent_theme_ids)
-      add_relative_themes!(:parent, theme_params[:parent_theme_ids])
-    end
+    @theme.parent_theme_ids = theme_params[:parent_theme_ids] if theme_params.key?(
+      :parent_theme_ids,
+    )
 
     set_fields
     update_settings
@@ -230,10 +232,14 @@ class Admin::ThemesController < Admin::AdminController
 
     @theme.remote_theme.update_remote_version if params[:theme][:remote_check]
 
-    @theme.remote_theme.update_from_remote if params[:theme][:remote_update]
+    if params[:theme][:remote_update]
+      @theme.remote_theme.update_from_remote(raise_if_theme_save_fails: false)
+    else
+      @theme.save
+    end
 
     respond_to do |format|
-      if @theme.save
+      if @theme.errors.blank?
         update_default_theme
 
         @theme = Theme.include_relations.find(@theme.id)
@@ -244,7 +250,7 @@ class Admin::ThemesController < Admin::AdminController
         log_theme_component_disabled if disables_component
         log_theme_component_enabled if enables_component
 
-        format.json { render json: @theme, status: :ok }
+        format.json { render json: serialize_data(@theme, ThemeSerializer), status: :ok }
       else
         format.json do
           error = @theme.errors.full_messages.join(", ").presence
@@ -256,6 +262,8 @@ class Admin::ThemesController < Admin::AdminController
       end
     end
   rescue RemoteTheme::ImportError => e
+    render_json_error e.message
+  rescue Theme::SettingsMigrationError => e
     render_json_error e.message
   end
 
@@ -269,11 +277,23 @@ class Admin::ThemesController < Admin::AdminController
     respond_to { |format| format.json { head :no_content } }
   end
 
+  def bulk_destroy
+    themes = Theme.where(id: params[:theme_ids])
+    raise Discourse::InvalidParameters.new(:id) if themes.blank?
+
+    ActiveRecord::Base.transaction do
+      themes.each { |theme| StaffActionLogger.new(current_user).log_theme_destroy(theme) }
+      themes.destroy_all
+    end
+
+    respond_to { |format| format.json { head :no_content } }
+  end
+
   def show
     @theme = Theme.include_relations.find_by(id: params[:id])
     raise Discourse::InvalidParameters.new(:id) unless @theme
 
-    render json: ThemeSerializer.new(@theme)
+    render_serialized(@theme, ThemeSerializer)
   end
 
   def export
@@ -291,6 +311,25 @@ class Admin::ThemesController < Admin::AdminController
     exporter.cleanup!
   end
 
+  def get_translations
+    params.require(:locale)
+    if I18n.available_locales.exclude?(params[:locale].to_sym)
+      raise Discourse::InvalidParameters.new(:locale)
+    end
+
+    I18n.locale = params[:locale]
+
+    @theme = Theme.find_by(id: params[:id])
+    raise Discourse::InvalidParameters.new(:id) unless @theme
+
+    translations =
+      @theme.translations.map do |translation|
+        { key: translation.key, value: translation.value, default: translation.default }
+      end
+
+    render json: { translations: translations }, status: :ok
+  end
+
   def update_single_setting
     params.require("name")
     @theme = Theme.find_by(id: params[:id])
@@ -300,13 +339,32 @@ class Admin::ThemesController < Admin::AdminController
     new_value = params[:value] || nil
 
     previous_value = @theme.cached_settings[setting_name]
-    @theme.update_setting(setting_name, new_value)
+
+    begin
+      @theme.update_setting(setting_name, new_value)
+    rescue Discourse::InvalidParameters => e
+      return render_json_error e.message
+    end
+
     @theme.save
 
     log_theme_setting_change(setting_name, previous_value, new_value)
 
     updated_setting = @theme.cached_settings.select { |key, val| key == setting_name }
     render json: updated_setting, status: :ok
+  end
+
+  def schema
+  end
+
+  def objects_setting_metadata
+    theme = Theme.find_by(id: params[:id])
+    raise Discourse::InvalidParameters.new(:id) unless theme
+
+    theme_setting = theme.settings[params[:setting_name].to_sym]
+    raise Discourse::InvalidParameters.new(:setting_name) unless theme_setting
+
+    render_serialized(theme_setting, ThemeObjectsSettingMetadataSerializer, root: false)
   end
 
   private
@@ -317,24 +375,6 @@ class Admin::ThemesController < Admin::AdminController
 
   def ban_for_remote_theme!
     raise Discourse::InvalidAccess if @theme.remote_theme&.is_git?
-  end
-
-  def add_relative_themes!(kind, ids)
-    expected = ids.map(&:to_i)
-
-    relation = kind == :child ? @theme.child_theme_relation : @theme.parent_theme_relation
-
-    relation.to_a.each do |relative|
-      if kind == :child && expected.include?(relative.child_theme_id)
-        expected.reject! { |id| id == relative.child_theme_id }
-      elsif kind == :parent && expected.include?(relative.parent_theme_id)
-        expected.reject! { |id| id == relative.parent_theme_id }
-      else
-        relative.destroy
-      end
-    end
-
-    Theme.where(id: expected).each { |theme| @theme.add_relative_theme!(kind, theme) }
   end
 
   def update_default_theme
@@ -363,6 +403,7 @@ class Admin::ThemesController < Admin::AdminController
           :component,
           :enabled,
           :auto_update,
+          :locale,
           settings: {
           },
           translations: {
@@ -401,6 +442,14 @@ class Admin::ThemesController < Admin::AdminController
 
   def update_translations
     return unless target_translations = theme_params[:translations]
+
+    locale = theme_params[:locale].presence
+    if locale
+      if I18n.available_locales.exclude?(locale.to_sym)
+        raise Discourse::InvalidParameters.new(:locale)
+      end
+      I18n.locale = locale
+    end
 
     target_translations.each_pair do |translation_key, new_value|
       @theme.update_translation(translation_key, new_value)

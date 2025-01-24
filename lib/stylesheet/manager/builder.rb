@@ -3,11 +3,12 @@
 class Stylesheet::Manager::Builder
   attr_reader :theme
 
-  def initialize(target: :desktop, theme: nil, color_scheme: nil, manager:)
+  def initialize(target: :desktop, theme: nil, color_scheme: nil, manager:, dark: false)
     @target = target
     @theme = theme
     @color_scheme = color_scheme
     @manager = manager
+    @dark = dark
   end
 
   def compile(opts = {})
@@ -35,17 +36,18 @@ class Stylesheet::Manager::Builder
       end
     end
 
-    rtl = @target.to_s =~ /_rtl\z/
+    rtl = @target.to_s.end_with?("_rtl")
     css, source_map =
       with_load_paths do |load_paths|
         Stylesheet::Compiler.compile_asset(
-          @target,
+          @target.to_s.gsub(/_rtl\z/, "").to_sym,
           rtl: rtl,
           theme_id: theme&.id,
           theme_variables: theme&.scss_variables.to_s,
           source_map_file: source_map_url_relative_from_stylesheet,
           color_scheme_id: @color_scheme&.id,
           load_paths: load_paths,
+          dark: @dark,
         )
       rescue SassC::SyntaxError, SassC::NotRenderedError => e
         if Stylesheet::Importer::THEME_TARGETS.include?(@target.to_s)
@@ -119,13 +121,14 @@ class Stylesheet::Manager::Builder
   end
 
   def qualified_target
+    dark_string = @dark ? "_dark" : ""
     if is_theme?
       "#{@target}_#{theme&.id}"
     elsif @color_scheme
-      "#{@target}_#{scheme_slug}_#{@color_scheme&.id.to_s}_#{@theme&.id}"
+      "#{@target}_#{scheme_slug}_#{@color_scheme&.id}_#{@theme&.id}#{dark_string}"
     else
       scheme_string = theme&.color_scheme ? "_#{theme.color_scheme.id}" : ""
-      "#{@target}#{scheme_string}"
+      "#{@target}#{scheme_string}#{dark_string}"
     end
   end
 
@@ -240,20 +243,14 @@ class Stylesheet::Manager::Builder
   def color_scheme_digest
     cs = @color_scheme || theme&.color_scheme
 
-    categories_updated =
-      Stylesheet::Manager
-        .cache
-        .defer_get_set("categories_updated") do
-          Category.where("uploaded_background_id IS NOT NULL").pluck(:updated_at).map(&:to_i).sum
-        end
-
     fonts = "#{SiteSetting.base_font}-#{SiteSetting.heading_font}"
 
     digest_string = "#{current_hostname}-"
-    if cs || categories_updated > 0
+    if cs
       theme_color_defs = resolve_baked_field(:common, :color_definitions)
+      dark_string = @dark ? "-dark" : ""
       digest_string +=
-        "#{RailsMultisite::ConnectionManagement.current_db}-#{cs&.id}-#{cs&.version}-#{theme_color_defs}-#{Stylesheet::Manager.fs_asset_cachebuster}-#{categories_updated}-#{fonts}"
+        "#{RailsMultisite::ConnectionManagement.current_db}-#{cs&.id}-#{cs&.version}-#{theme_color_defs}-#{Stylesheet::Manager.fs_asset_cachebuster}-#{fonts}#{dark_string}"
     else
       digest_string += "defaults-#{Stylesheet::Manager.fs_asset_cachebuster}-#{fonts}"
 

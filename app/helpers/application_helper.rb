@@ -13,6 +13,9 @@ module ApplicationHelper
     @extra_body_classes ||= Set.new
   end
 
+  # This generated equivalent of Ember's config/environment.js is used
+  # in development, production, and theme tests. (i.e. everywhere except
+  # regular tests)
   def discourse_config_environment(testing: false)
     # TODO: Can this come from Ember CLI somehow?
     config = {
@@ -20,29 +23,32 @@ module ApplicationHelper
       environment: Rails.env,
       rootURL: Discourse.base_path,
       locationType: "history",
-      historySupportMiddleware: false,
       EmberENV: {
         FEATURES: {
         },
         EXTEND_PROTOTYPES: {
           Date: false,
+          String: false,
         },
-        _APPLICATION_TEMPLATE_WRAPPER: false,
-        _DEFAULT_ASYNC_OBSERVERS: true,
-        _JQUERY_INTEGRATION: true,
       },
       APP: {
         name: "discourse",
         version: "#{Discourse::VERSION::STRING} #{Discourse.git_version}",
-        exportApplicationGlobal: true,
+        # LOG_RESOLVER: true,
+        # LOG_ACTIVE_GENERATION: true,
+        # LOG_TRANSITIONS: true,
+        # LOG_TRANSITIONS_INTERNAL: true,
+        # LOG_VIEW_LOOKUPS: true,
       },
     }
 
     if testing
       config[:environment] = "test"
       config[:locationType] = "none"
-      config[:APP][:autoboot] = false
+      config[:APP][:LOG_ACTIVE_GENERATION] = false
+      config[:APP][:LOG_VIEW_LOOKUPS] = false
       config[:APP][:rootElement] = "#ember-testing"
+      config[:APP][:autoboot] = false
     end
 
     config.to_json
@@ -64,8 +70,8 @@ module ApplicationHelper
     google_universal_analytics_json
   end
 
-  def self.google_tag_manager_nonce
-    @gtm_nonce ||= SecureRandom.hex
+  def csp_nonce_placeholder
+    ContentSecurityPolicy.nonce_placeholder(response.headers)
   end
 
   def shared_session_key
@@ -122,48 +128,45 @@ module ApplicationHelper
           path = path.gsub(/\.([^.]+)\z/, '.gz.\1')
         end
       end
-    elsif GlobalSetting.cdn_url&.start_with?("https") && is_brotli_req? &&
-          Rails.env != "development"
-      path = path.gsub("#{GlobalSetting.cdn_url}/assets/", "#{GlobalSetting.cdn_url}/brotli_asset/")
     end
 
     path
   end
 
   def preload_script(script)
-    scripts = [script]
+    scripts = []
 
     if chunks = EmberCli.script_chunks[script]
       scripts.push(*chunks)
+    else
+      scripts.push(script)
     end
 
     scripts
       .map do |name|
         path = script_asset_path(name)
-        preload_script_url(path)
+        preload_script_url(path, entrypoint: script)
       end
       .join("\n")
       .html_safe
   end
 
-  def preload_script_url(url)
+  def preload_script_url(url, entrypoint: nil)
+    entrypoint_attribute = entrypoint ? "data-discourse-entrypoint=\"#{entrypoint}\"" : ""
+    nonce_attribute = "nonce=\"#{csp_nonce_placeholder}\""
+
     add_resource_preload_list(url, "script")
-    if GlobalSetting.preload_link_header
-      <<~HTML.html_safe
-        <script defer src="#{url}"></script>
-      HTML
-    else
-      <<~HTML.html_safe
-        <link rel="preload" href="#{url}" as="script">
-        <script defer src="#{url}"></script>
-      HTML
-    end
+
+    <<~HTML.html_safe
+      <script defer src="#{url}" #{entrypoint_attribute} #{nonce_attribute}></script>
+    HTML
   end
 
   def add_resource_preload_list(resource_url, type)
-    if !@links_to_preload.nil?
-      @links_to_preload << %Q(<#{resource_url}>; rel="preload"; as="#{type}")
-    end
+    links =
+      controller.instance_variable_get(:@asset_preload_links) ||
+        controller.instance_variable_set(:@asset_preload_links, [])
+    links << %Q(<#{resource_url}>; rel="preload"; as="#{type}")
   end
 
   def discourse_csrf_tags
@@ -177,7 +180,6 @@ module ApplicationHelper
     list = []
     list << (mobile_view? ? "mobile-view" : "desktop-view")
     list << (mobile_device? ? "mobile-device" : "not-mobile-device")
-    list << "ios-device" if ios_device?
     list << "rtl" if rtl?
     list << text_size_class
     list << "anon" unless current_user
@@ -261,7 +263,7 @@ module ApplicationHelper
   end
 
   def rtl?
-    %w[ar ur fa_IR he].include? I18n.locale.to_s
+    Rtl::LOCALES.include? I18n.locale.to_s
   end
 
   def html_lang
@@ -297,7 +299,7 @@ module ApplicationHelper
     ) if opts[:twitter_summary_large_image].present?
 
     result = []
-    result << tag(:meta, property: "og:site_name", content: SiteSetting.title)
+    result << tag(:meta, property: "og:site_name", content: opts[:site_name] || SiteSetting.title)
     result << tag(:meta, property: "og:type", content: "website")
 
     generate_twitter_card_metadata(result, opts)
@@ -369,6 +371,7 @@ module ApplicationHelper
         "@context" => "http://schema.org",
         "@type" => "WebSite",
         :url => Discourse.base_url,
+        :name => SiteSetting.title,
         :potentialAction => {
           "@type" => "SearchAction",
           :target => "#{Discourse.base_url}/search?q={search_term_string}",
@@ -432,7 +435,11 @@ module ApplicationHelper
   end
 
   def include_crawler_content?
-    crawler_layout? || !mobile_view? || !modern_mobile_device?
+    if current_user && !crawler_layout?
+      params.key?(:print)
+    else
+      crawler_layout? || !mobile_view? || !modern_mobile_device?
+    end
   end
 
   def modern_mobile_device?
@@ -441,10 +448,6 @@ module ApplicationHelper
 
   def mobile_device?
     MobileDetection.mobile_device?(request.user_agent)
-  end
-
-  def ios_device?
-    MobileDetection.ios_device?(request.user_agent)
   end
 
   def customization_disabled?
@@ -552,12 +555,16 @@ module ApplicationHelper
   end
 
   def dark_scheme_id
-    cookies[:dark_scheme_id] || current_user&.user_option&.dark_scheme_id ||
-      SiteSetting.default_dark_mode_color_scheme_id
+    if SiteSetting.use_overhauled_theme_color_palette
+      scheme_id
+    else
+      cookies[:dark_scheme_id] || current_user&.user_option&.dark_scheme_id ||
+        SiteSetting.default_dark_mode_color_scheme_id
+    end
   end
 
   def current_homepage
-    current_user&.user_option&.homepage || SiteSetting.anonymous_homepage
+    current_user&.user_option&.homepage || HomepageHelper.resolve(request, current_user)
   end
 
   def build_plugin_html(name)
@@ -581,6 +588,7 @@ module ApplicationHelper
       mobile_view? ? :mobile : :desktop,
       name,
       skip_transformation: request.env[:skip_theme_ids_transformation].present?,
+      csp_nonce: csp_nonce_placeholder,
     )
   end
 
@@ -590,6 +598,7 @@ module ApplicationHelper
       :translations,
       I18n.locale,
       skip_transformation: request.env[:skip_theme_ids_transformation].present?,
+      csp_nonce: csp_nonce_placeholder,
     )
   end
 
@@ -599,6 +608,7 @@ module ApplicationHelper
       :extra_js,
       nil,
       skip_transformation: request.env[:skip_theme_ids_transformation].present?,
+      csp_nonce: csp_nonce_placeholder,
     )
   end
 
@@ -632,6 +642,7 @@ module ApplicationHelper
       result << stylesheet_manager.color_scheme_stylesheet_preload_tag(
         dark_scheme_id,
         "(prefers-color-scheme: dark)",
+        dark: SiteSetting.use_overhauled_theme_color_palette,
       )
     end
 
@@ -651,6 +662,7 @@ module ApplicationHelper
         dark_scheme_id,
         "(prefers-color-scheme: dark)",
         self.method(:add_resource_preload_list),
+        dark: SiteSetting.use_overhauled_theme_color_palette,
       )
     end
 
@@ -662,7 +674,7 @@ module ApplicationHelper
     if dark_scheme_id != -1
       result << <<~HTML
         <meta name="theme-color" media="(prefers-color-scheme: light)" content="##{ColorScheme.hex_for_name("header_background", scheme_id)}">
-        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="##{ColorScheme.hex_for_name("header_background", dark_scheme_id)}">
+        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="##{ColorScheme.hex_for_name("header_background", dark_scheme_id, dark: SiteSetting.use_overhauled_theme_color_palette)}">
       HTML
     else
       result << <<~HTML
@@ -670,6 +682,20 @@ module ApplicationHelper
       HTML
     end
     result.html_safe
+  end
+
+  def discourse_color_scheme_meta_tag
+    scheme =
+      if dark_scheme_id == -1
+        # no automatic client-side switching
+        dark_color_scheme? ? "dark" : "light"
+      else
+        # auto-switched based on browser setting
+        "light dark"
+      end
+    <<~HTML.html_safe
+        <meta name="color-scheme" content="#{scheme}">
+      HTML
   end
 
   def dark_color_scheme?
@@ -689,7 +715,6 @@ module ApplicationHelper
       base_uri: Discourse.base_path,
       environment: Rails.env,
       letter_avatar_version: LetterAvatar.version,
-      markdown_it_url: script_asset_path("markdown-it-bundle"),
       service_worker_url: "service-worker.js",
       default_locale: SiteSetting.default_locale,
       asset_version: Discourse.assets_digest,
@@ -734,6 +759,10 @@ module ApplicationHelper
     absolute_url
   end
 
+  def escape_noscript(&block)
+    raw capture(&block).gsub(%r{<(/\s*noscript)}i, '&lt;\1')
+  end
+
   def manifest_url
     # If you want the `manifest_url` to be different for a specific action,
     # in the action set @manifest_url = X. Originally added for chat to add a
@@ -748,6 +777,10 @@ module ApplicationHelper
 
   def rss_creator(user)
     user&.display_name
+  end
+
+  def anonymous_top_menu_items
+    Discourse.anonymous_top_menu_items.map(&:to_s)
   end
 
   def authentication_data

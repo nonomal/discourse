@@ -1,23 +1,17 @@
-import { action } from "@ember/object";
-import Route from "@ember/routing/route";
+import { service } from "@ember/service";
+import DiscourseRoute from "discourse/routes/discourse";
+import { i18n } from "discourse-i18n";
+import AdminPlugin from "admin/models/admin-plugin";
 
-export default class AdminPluginsRoute extends Route {
-  model() {
-    return this.store.findAll("plugin");
+export default class AdminPluginsRoute extends DiscourseRoute {
+  @service router;
+
+  async model() {
+    const plugins = await this.store.findAll("plugin");
+    return plugins.map((plugin) => AdminPlugin.create(plugin));
   }
 
-  @action
-  showSettings(plugin) {
-    const controller = this.controllerFor("adminSiteSettings");
-    this.transitionTo("adminSiteSettingsCategory", "plugins").then(() => {
-      if (plugin) {
-        // filterContent() is normally on a debounce from typing.
-        // Because we don't want the default of "All Results", we tell it
-        // to skip the next debounce.
-        controller.set("filter", `plugin:${plugin.id}`);
-        controller.set("_skipBounce", true);
-        controller.filterContentNow("plugins");
-      }
-    });
+  titleToken() {
+    return i18n("admin.plugins.title");
   }
 }

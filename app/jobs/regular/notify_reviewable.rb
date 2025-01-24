@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
 class Jobs::NotifyReviewable < ::Jobs::Base
-  # remove all the legacy stuff here when redesigned_user_menu_enabled is
-  # removed
+  # this job can take a very long time if there are many mods
+  # do not swamp the queue with it
+  cluster_concurrency 1
+
   def execute(args)
     return unless reviewable = Reviewable.find_by(id: args[:reviewable_id])
 
@@ -18,64 +20,44 @@ class Jobs::NotifyReviewable < ::Jobs::Base
 
           all_updates[:admins][r.id] = payload
           all_updates[:moderators][r.id] = payload if r.reviewable_by_moderator?
-          all_updates[r.reviewable_by_group_id][r.id] = payload if r.reviewable_by_group_id
+
+          if SiteSetting.enable_category_group_moderation? && r.category.present?
+            r
+              .category
+              .moderating_groups
+              .pluck(:id)
+              .each { |group_id| all_updates[group_id][r.id] = payload }
+          end
         end
     end
 
     DistributedMutex.synchronize("notify_reviewable_job", validity: 120) do
-      counts = Hash.new(0)
-      Reviewable
-        .default_visible
-        .pending
-        .group(:reviewable_by_moderator, :reviewable_by_group_id)
-        .pluck(:reviewable_by_moderator, :reviewable_by_group_id, "count(*)")
-        .each do |reviewable_by_moderator, reviewable_by_group_id, count|
-          counts[:admins] += count
-          counts[:moderators] += count if reviewable_by_moderator
-          counts[reviewable_by_group_id] += count if reviewable_by_group_id
-        end
-
-      if SiteSetting.legacy_navigation_menu?
-        notify_legacy(
-          User.real.admins.pluck(:id),
-          count: counts[:admins],
-          updates: all_updates[:admins],
-        )
-      else
-        notify_users(User.real.admins, all_updates[:admins])
-      end
+      notify_users(User.real.admins, all_updates[:admins])
 
       if reviewable.reviewable_by_moderator?
-        if SiteSetting.legacy_navigation_menu?
-          notify_legacy(
-            User.real.moderators.where("id NOT IN (?)", @contacted).pluck(:id),
-            count: counts[:moderators],
-            updates: all_updates[:moderators],
-          )
-        else
-          notify_users(
-            User.real.moderators.where("id NOT IN (?)", @contacted),
-            all_updates[:moderators],
-          )
-        end
+        notify_users(
+          User.real.moderators.where("id NOT IN (?)", @contacted),
+          all_updates[:moderators],
+        )
       end
 
-      if SiteSetting.enable_category_group_moderation? && (group = reviewable.reviewable_by_group)
-        users = group.users.includes(:group_users).where("users.id NOT IN (?)", @contacted)
+      if SiteSetting.enable_category_group_moderation? && reviewable.category.present?
+        users =
+          User
+            .includes(:group_users)
+            .joins(:group_users)
+            .joins(
+              "INNER JOIN category_moderation_groups ON category_moderation_groups.group_id = group_users.group_id",
+            )
+            .where("category_moderation_groups.category_id": reviewable.category.id)
+            .where("users.id NOT IN (?)", @contacted)
+            .distinct
 
         users.find_each do |user|
-          count = 0
           updates = {}
-          user.group_users.each do |gu|
-            updates.merge!(all_updates[gu.group_id])
-            count += counts[gu.group_id]
-          end
+          user.group_users.each { |gu| updates.merge!(all_updates[gu.group_id]) }
 
-          if SiteSetting.legacy_navigation_menu?
-            notify_legacy([user.id], count: count, updates: updates)
-          else
-            notify_user(user, updates)
-          end
+          notify_user(user, updates)
         end
 
         @contacted += users.pluck(:id)
@@ -84,16 +66,6 @@ class Jobs::NotifyReviewable < ::Jobs::Base
   end
 
   protected
-
-  def notify_legacy(user_ids, count:, updates:)
-    return if user_ids.blank?
-
-    data = { reviewable_count: count }
-    data[:updates] = updates if updates.present?
-
-    MessageBus.publish("/reviewable_counts", data, user_ids: user_ids)
-    @contacted += user_ids
-  end
 
   def notify_users(users, updates)
     users.find_each { |user| notify_user(user, updates) }

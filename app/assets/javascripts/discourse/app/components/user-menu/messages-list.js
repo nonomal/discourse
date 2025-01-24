@@ -1,13 +1,12 @@
+import { service } from "@ember/service";
 import UserMenuNotificationsList from "discourse/components/user-menu/notifications-list";
 import { ajax } from "discourse/lib/ajax";
-import Notification from "discourse/models/notification";
-import showModal from "discourse/lib/show-modal";
-import I18n from "I18n";
-import UserMenuNotificationItem from "discourse/lib/user-menu/notification-item";
 import UserMenuMessageItem from "discourse/lib/user-menu/message-item";
-import Topic from "discourse/models/topic";
+import UserMenuNotificationItem from "discourse/lib/user-menu/notification-item";
 import { mergeSortedLists } from "discourse/lib/utilities";
-import { inject as service } from "@ember/service";
+import Notification from "discourse/models/notification";
+import Topic from "discourse/models/topic";
+import { i18n } from "discourse-i18n";
 
 export default class UserMenuMessagesList extends UserMenuNotificationsList {
   @service store;
@@ -21,7 +20,7 @@ export default class UserMenuMessagesList extends UserMenuNotificationsList {
   }
 
   get showAllTitle() {
-    return I18n.t("user_menu.view_all_messages");
+    return i18n("user_menu.view_all_messages");
   }
 
   get showDismiss() {
@@ -29,7 +28,7 @@ export default class UserMenuMessagesList extends UserMenuNotificationsList {
   }
 
   get dismissTitle() {
-    return I18n.t("user.dismiss_messages_tooltip");
+    return i18n("user.dismiss_messages_tooltip");
   }
 
   get itemsCacheKey() {
@@ -47,6 +46,12 @@ export default class UserMenuMessagesList extends UserMenuNotificationsList {
     // we can stop using `get()` when the User model is refactored into native
     // class with @tracked properties.
     return this.currentUser.get(key) || 0;
+  }
+
+  get dismissConfirmationText() {
+    return i18n("notifications.dismiss_confirmation.body.messages", {
+      count: this.#unreadMessagesNotifications,
+    });
   }
 
   async fetchItems() {
@@ -72,6 +77,19 @@ export default class UserMenuMessagesList extends UserMenuNotificationsList {
     const topics = data.topics.map((t) => this.store.createRecord("topic", t));
     await Topic.applyTransformations(topics);
 
+    if (
+      this.siteSettings.show_user_menu_avatars ||
+      this.siteSettings.prioritize_full_name_in_ux
+    ) {
+      // Populate avatar_template for lastPoster
+      const usersById = new Map(data.users.map((u) => [u.id, u]));
+      topics.forEach((t) => {
+        const lastPoster = usersById.get(t.lastPoster.user_id);
+        t.last_poster_avatar_template = lastPoster?.avatar_template;
+        t.last_poster_name = lastPoster?.name;
+      });
+    }
+
     const readNotifications = await Notification.initializeNotifications(
       data.read_notifications
     );
@@ -91,21 +109,16 @@ export default class UserMenuMessagesList extends UserMenuNotificationsList {
           })
         );
       } else {
-        content.push(new UserMenuMessageItem({ message: item }));
+        content.push(
+          new UserMenuMessageItem({
+            message: item,
+            siteSettings: this.siteSettings,
+            site: this.site,
+          })
+        );
       }
     });
 
     return content;
-  }
-
-  dismissWarningModal() {
-    const modalController = showModal("dismiss-notification-confirmation");
-    modalController.set(
-      "confirmationMessage",
-      I18n.t("notifications.dismiss_confirmation.body.messages", {
-        count: this.#unreadMessagesNotifications,
-      })
-    );
-    return modalController;
   }
 }

@@ -3,11 +3,33 @@
 
 RSpec.describe ApplicationHelper do
   describe "preload_script" do
-    def script_tag(url)
+    def script_tag(url, entrypoint, nonce)
       <<~HTML
-          <link rel="preload" href="#{url}" as="script">
-          <script defer src="#{url}"></script>
+          <script defer src="#{url}" data-discourse-entrypoint="#{entrypoint}" nonce="#{nonce}"></script>
       HTML
+    end
+
+    it "does not send crawler content to logged on users" do
+      controller.stubs(:use_crawler_layout?).returns(false)
+      helper.stubs(:current_user).returns(Fabricate(:user))
+
+      helper.request.user_agent = "Firefox"
+      expect(helper.include_crawler_content?).to eq(false)
+    end
+
+    it "sends crawler content to logged on users who wants to print" do
+      helper.stubs(:current_user).returns(Fabricate(:user))
+      controller.stubs(:use_crawler_layout?).returns(false)
+      helper.stubs(:params).returns(print: true)
+
+      expect(helper.include_crawler_content?).to eq(true)
+    end
+
+    it "sends crawler content to logged on users with a crawler user agent" do
+      helper.stubs(:current_user).returns(Fabricate(:user))
+      controller.stubs(:use_crawler_layout?).returns(true)
+
+      expect(helper.include_crawler_content?).to eq(true)
     end
 
     it "sends crawler content to old mobiles" do
@@ -28,15 +50,6 @@ RSpec.describe ApplicationHelper do
       expect(helper.include_crawler_content?).to eq(false)
     end
 
-    it "provides brotli links to brotli cdn" do
-      set_cdn_url "https://awesome.com"
-
-      helper.request.env["HTTP_ACCEPT_ENCODING"] = "br"
-      link = helper.preload_script("discourse")
-
-      expect(link).to eq(script_tag("https://awesome.com/brotli_asset/discourse.js"))
-    end
-
     context "with s3 CDN" do
       before do
         global_setting :s3_bucket, "test_bucket"
@@ -48,8 +61,8 @@ RSpec.describe ApplicationHelper do
 
       it "deals correctly with subfolder" do
         set_subfolder "/community"
-        expect(helper.preload_script("discourse")).to include(
-          "https://s3cdn.com/assets/discourse.js",
+        expect(helper.preload_script("start-discourse")).to include(
+          "https://s3cdn.com/assets/start-discourse.js",
         )
       end
 
@@ -57,92 +70,108 @@ RSpec.describe ApplicationHelper do
         global_setting :s3_cdn_url, "https://s3cdn.com/s3_subpath"
         set_cdn_url "https://awesome.com"
         set_subfolder "/community"
-        expect(helper.preload_script("discourse")).to include(
-          "https://s3cdn.com/s3_subpath/assets/discourse.js",
+        expect(helper.preload_script("start-discourse")).to include(
+          "https://s3cdn.com/s3_subpath/assets/start-discourse.js",
         )
       end
 
       it "returns magic brotli mangling for brotli requests" do
         helper.request.env["HTTP_ACCEPT_ENCODING"] = "br"
-        link = helper.preload_script("discourse")
+        link = helper.preload_script("start-discourse")
 
-        expect(link).to eq(script_tag("https://s3cdn.com/assets/discourse.br.js"))
+        expect(link).to eq(
+          script_tag(
+            "https://s3cdn.com/assets/start-discourse.br.js",
+            "start-discourse",
+            helper.csp_nonce_placeholder,
+          ),
+        )
       end
 
       it "gives s3 cdn if asset host is not set" do
-        link = helper.preload_script("discourse")
+        link = helper.preload_script("start-discourse")
 
-        expect(link).to eq(script_tag("https://s3cdn.com/assets/discourse.js"))
+        expect(link).to eq(
+          script_tag(
+            "https://s3cdn.com/assets/start-discourse.js",
+            "start-discourse",
+            helper.csp_nonce_placeholder,
+          ),
+        )
       end
 
       it "can fall back to gzip compression" do
         helper.request.env["HTTP_ACCEPT_ENCODING"] = "gzip"
-        link = helper.preload_script("discourse")
-        expect(link).to eq(script_tag("https://s3cdn.com/assets/discourse.gz.js"))
+        link = helper.preload_script("start-discourse")
+        expect(link).to eq(
+          script_tag(
+            "https://s3cdn.com/assets/start-discourse.gz.js",
+            "start-discourse",
+            helper.csp_nonce_placeholder,
+          ),
+        )
       end
 
       it "gives s3 cdn even if asset host is set" do
         set_cdn_url "https://awesome.com"
-        link = helper.preload_script("discourse")
+        link = helper.preload_script("start-discourse")
 
-        expect(link).to eq(script_tag("https://s3cdn.com/assets/discourse.js"))
+        expect(link).to eq(
+          script_tag(
+            "https://s3cdn.com/assets/start-discourse.js",
+            "start-discourse",
+            helper.csp_nonce_placeholder,
+          ),
+        )
       end
 
       it "gives s3 cdn but without brotli/gzip extensions for theme tests assets" do
         helper.request.env["HTTP_ACCEPT_ENCODING"] = "gzip, br"
         link = helper.preload_script("discourse/tests/theme_qunit_ember_jquery")
         expect(link).to eq(
-          script_tag("https://s3cdn.com/assets/discourse/tests/theme_qunit_ember_jquery.js"),
+          script_tag(
+            "https://s3cdn.com/assets/discourse/tests/theme_qunit_ember_jquery.js",
+            "discourse/tests/theme_qunit_ember_jquery",
+            helper.csp_nonce_placeholder,
+          ),
         )
       end
 
       it "uses separate asset CDN if configured" do
         global_setting :s3_asset_cdn_url, "https://s3-asset-cdn.example.com"
-        expect(helper.preload_script("discourse")).to include(
-          "https://s3-asset-cdn.example.com/assets/discourse.js",
+        expect(helper.preload_script("start-discourse")).to include(
+          "https://s3-asset-cdn.example.com/assets/start-discourse.js",
         )
       end
     end
   end
 
   describe "add_resource_preload_list" do
-    it "adds resources to the preload list when it's available" do
-      @links_to_preload = []
-      add_resource_preload_list("/assets/discourse.js", "script")
+    it "adds resources to the preload list" do
+      add_resource_preload_list("/assets/start-discourse.js", "script")
       add_resource_preload_list("/assets/discourse.css", "style")
 
-      expect(@links_to_preload.size).to eq(2)
-    end
-
-    it "doesn't add resources to the preload list when it's not available" do
-      @links_to_preload = nil
-      add_resource_preload_list("/assets/discourse.js", "script")
-      add_resource_preload_list("/assets/discourse.css", "style")
-
-      expect(@links_to_preload).to eq(nil)
+      expect(controller.instance_variable_get(:@asset_preload_links).size).to eq(2)
     end
 
     it "adds resources to the preload list when preload_script is called" do
-      @links_to_preload = []
-      helper.preload_script("discourse")
+      helper.preload_script("start-discourse")
 
-      expect(@links_to_preload.size).to eq(1)
+      expect(controller.instance_variable_get(:@asset_preload_links).size).to eq(1)
     end
 
     it "adds resources to the preload list when discourse_stylesheet_link_tag is called" do
-      @links_to_preload = []
       helper.discourse_stylesheet_link_tag(:desktop)
 
-      expect(@links_to_preload.size).to eq(1)
+      expect(controller.instance_variable_get(:@asset_preload_links).size).to eq(1)
     end
 
     it "adds resources as the correct type" do
-      @links_to_preload = []
       helper.discourse_stylesheet_link_tag(:desktop)
-      helper.preload_script("discourse")
+      helper.preload_script("start-discourse")
 
-      expect(@links_to_preload[0]).to match(/as="style"/)
-      expect(@links_to_preload[1]).to match(/as="script"/)
+      expect(controller.instance_variable_get(:@asset_preload_links)[0]).to match(/as="style"/)
+      expect(controller.instance_variable_get(:@asset_preload_links)[1]).to match(/as="script"/)
     end
   end
 
@@ -161,7 +190,19 @@ RSpec.describe ApplicationHelper do
         it "will return sitelinks search tag" do
           helper.stubs(:current_page?).returns(false)
           helper.stubs(:current_page?).with("/").returns(true)
-          expect(helper.render_sitelinks_search_tag).to include('"@type":"SearchAction"')
+
+          sitelinks_search_tag =
+            JSON.parse(
+              helper
+                .render_sitelinks_search_tag
+                .gsub('<script type="application/ld+json">', "")
+                .gsub("</script>", ""),
+            )
+
+          expect(sitelinks_search_tag["@type"]).to eq("WebSite")
+          expect(sitelinks_search_tag["potentialAction"]["@type"]).to eq("SearchAction")
+          expect(sitelinks_search_tag["name"]).to eq(SiteSetting.title)
+          expect(sitelinks_search_tag["url"]).to eq(Discourse.base_url)
         end
       end
       context "when not on homepage" do
@@ -180,6 +221,7 @@ RSpec.describe ApplicationHelper do
           helper.stubs(:current_page?).returns(false)
           helper.stubs(:current_page?).with(Discourse.base_path).returns(true)
           expect(helper.render_sitelinks_search_tag).to include('"@type":"SearchAction"')
+          expect(helper.render_sitelinks_search_tag).to include("subfolder-base-path")
         end
       end
       context "when not on homepage" do
@@ -200,7 +242,7 @@ RSpec.describe ApplicationHelper do
         dark_theme =
           Theme.create(
             name: "Dark",
-            user_id: -1,
+            user_id: Discourse::SYSTEM_USER_ID,
             color_scheme_id: ColorScheme.find_by(base_scheme_id: "Dark").id,
           )
         helper.request.env[:resolved_theme_id] = dark_theme.id
@@ -260,7 +302,7 @@ RSpec.describe ApplicationHelper do
         _dark_theme =
           Theme.create(
             name: "Dark",
-            user_id: -1,
+            user_id: Discourse::SYSTEM_USER_ID,
             color_scheme_id: ColorScheme.find_by(base_scheme_id: "Dark").id,
           )
       end
@@ -285,7 +327,7 @@ RSpec.describe ApplicationHelper do
         dark_theme =
           Theme.create(
             name: "Dark",
-            user_id: -1,
+            user_id: Discourse::SYSTEM_USER_ID,
             color_scheme_id: ColorScheme.find_by(base_scheme_id: "Dark").id,
           )
         helper.request.env[:resolved_theme_id] = dark_theme.id
@@ -450,7 +492,7 @@ RSpec.describe ApplicationHelper do
   end
 
   describe "#html_classes" do
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
 
     it "includes 'rtl' when the I18n.locale is rtl" do
       I18n.stubs(:locale).returns(:he)
@@ -672,10 +714,31 @@ RSpec.describe ApplicationHelper do
         expect(metadata).to include output_tags
       end
     end
+
+    context "with custom site name" do
+      before { SiteSetting.title = "Default Site Title" }
+
+      it "uses the provided site name in og:site_name" do
+        custom_site_name = "Custom Site Name"
+        result = helper.crawlable_meta_data(site_name: custom_site_name)
+
+        expect(result).to include(
+          "<meta property=\"og:site_name\" content=\"#{custom_site_name}\" />",
+        )
+      end
+
+      it "falls back to the default site title if no custom site name is provided" do
+        result = helper.crawlable_meta_data
+
+        expect(result).to include(
+          "<meta property=\"og:site_name\" content=\"#{SiteSetting.title}\" />",
+        )
+      end
+    end
   end
 
   describe "discourse_color_scheme_stylesheets" do
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
 
     it "returns a stylesheet link tag by default" do
       cs_stylesheets = helper.discourse_color_scheme_stylesheets
@@ -783,7 +846,7 @@ RSpec.describe ApplicationHelper do
       dark_theme =
         Theme.create(
           name: "Dark",
-          user_id: -1,
+          user_id: Discourse::SYSTEM_USER_ID,
           color_scheme_id: ColorScheme.find_by(base_scheme_id: "Dark").id,
         )
       helper.request.env[:resolved_theme_id] = dark_theme.id
@@ -793,7 +856,7 @@ RSpec.describe ApplicationHelper do
   end
 
   describe "html_lang" do
-    fab!(:user) { Fabricate(:user) }
+    fab!(:user)
 
     before do
       I18n.locale = :de
@@ -814,12 +877,20 @@ RSpec.describe ApplicationHelper do
   describe "#discourse_theme_color_meta_tags" do
     before do
       light = Fabricate(:color_scheme)
-      light.color_scheme_colors << ColorSchemeColor.new(name: "header_background", hex: "abcdef")
+      light.color_scheme_colors << ColorSchemeColor.new(
+        name: "header_background",
+        hex: "abcdef",
+        dark_hex: "fedcba",
+      )
       light.save!
       helper.request.cookies["color_scheme_id"] = light.id
 
       dark = Fabricate(:color_scheme)
-      dark.color_scheme_colors << ColorSchemeColor.new(name: "header_background", hex: "defabc")
+      dark.color_scheme_colors << ColorSchemeColor.new(
+        name: "header_background",
+        hex: "defabc",
+        dark_hex: "cbafed",
+      )
       dark.save!
       helper.request.cookies["dark_scheme_id"] = dark.id
     end
@@ -838,6 +909,81 @@ RSpec.describe ApplicationHelper do
       expect(helper.discourse_theme_color_meta_tags).to eq(<<~HTML)
         <meta name="theme-color" media="all" content="#abcdef">
       HTML
+    end
+
+    context "when use_overhauled_theme_color_palette setting is true" do
+      before { SiteSetting.use_overhauled_theme_color_palette = true }
+
+      it "renders a light and dark theme-color meta tag using the light and dark palettes of the same color scheme record" do
+        expect(helper.discourse_theme_color_meta_tags).to eq(<<~HTML)
+          <meta name="theme-color" media="(prefers-color-scheme: light)" content="#abcdef">
+          <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#fedcba">
+        HTML
+      end
+    end
+  end
+
+  describe "#discourse_color_scheme_meta_tag" do
+    fab!(:color_scheme)
+
+    before { SiteSetting.default_dark_mode_color_scheme_id = -1 }
+
+    it "renders a 'light' color-scheme if no dark scheme is set and the current scheme is light" do
+      ColorSchemeRevisor.revise(
+        color_scheme,
+        colors: [{ name: "primary", hex: "333333" }, { name: "secondary", hex: "DDDDDD" }],
+      )
+
+      helper.request.cookies["color_scheme_id"] = color_scheme.id
+
+      expect(helper.discourse_color_scheme_meta_tag).to eq(<<~HTML)
+        <meta name="color-scheme" content="light">
+      HTML
+    end
+
+    it "renders a 'dark' color-scheme if no dark scheme is set and the default scheme is dark" do
+      ColorSchemeRevisor.revise(
+        color_scheme,
+        colors: [{ name: "primary", hex: "F8F8F8" }, { name: "secondary", hex: "232323" }],
+      )
+      @scheme_id = color_scheme.id
+
+      expect(helper.discourse_color_scheme_meta_tag).to eq(<<~HTML)
+        <meta name="color-scheme" content="dark">
+      HTML
+    end
+
+    it "renders a 'light dark' color-scheme if a dark scheme is set" do
+      dark = Fabricate(:color_scheme)
+      dark.save!
+      helper.request.cookies["dark_scheme_id"] = dark.id
+
+      expect(helper.discourse_color_scheme_meta_tag).to eq(<<~HTML)
+        <meta name="color-scheme" content="light dark">
+      HTML
+    end
+  end
+
+  describe "#dark_scheme_id" do
+    fab!(:dark_scheme) { Fabricate(:color_scheme) }
+    fab!(:light_scheme) { Fabricate(:color_scheme) }
+
+    before do
+      helper.request.cookies["color_scheme_id"] = light_scheme.id
+      helper.request.cookies["dark_scheme_id"] = dark_scheme.id
+    end
+
+    it "returns the value set in the dark_scheme_id cookie" do
+      expect(helper.dark_scheme_id).to eq(dark_scheme.id)
+    end
+
+    context "when use_overhauled_theme_color_palette is true" do
+      before { SiteSetting.use_overhauled_theme_color_palette = true }
+
+      it "returns the same value as #scheme_id" do
+        expect(helper.dark_scheme_id).to eq(helper.scheme_id)
+        expect(helper.scheme_id).to eq(light_scheme.id)
+      end
     end
   end
 end
